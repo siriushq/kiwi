@@ -555,7 +555,11 @@ public class TopToolbarCoordinator implements Toolbar {
         mOptionalButtonController.setDelegate(delegate);
     }
 
-    @Override
+    /**
+     * Gives inheriting classes the chance to update the visibility of the
+     * reload button.
+     * @param isReloading Whether or not the current tab is loading.
+     */
     public void updateReloadButtonVisibility(boolean isReloading) {
         mNtpLoadingSupplier.set(isReloading);
     }
