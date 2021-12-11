@@ -303,6 +303,7 @@ content::RenderFrame* GetMainRenderFrameForCurrentContext() {
 }
 
 SearchBox* GetSearchBoxForCurrentContext() {
+  LOG(INFO) << "[Kiwi] SearchBox* GetSearchBoxForCurrentContext";
   content::RenderFrame* main_frame = GetMainRenderFrameForCurrentContext();
   if (!main_frame) {
     return nullptr;
