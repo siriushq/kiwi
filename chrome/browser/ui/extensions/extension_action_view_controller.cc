@@ -132,6 +132,15 @@ GetHoverCardPolicyState(Profile& profile,
 
 }  // namespace
 
+namespace {
+
+void RecordInvocationSource(
+    ToolbarActionViewController::InvocationSource source) {
+  base::UmaHistogramEnumeration("Extensions.Toolbar.InvocationSource", source);
+}
+
+}  // namespace
+
 // static
 std::unique_ptr<ExtensionActionViewController>
 ExtensionActionViewController::Create(
@@ -355,6 +364,12 @@ bool ExtensionActionViewController::IsEnabled(
 
 bool ExtensionActionViewController::IsShowingPopup() const {
   return popup_host_ != nullptr;
+}
+
+bool ExtensionActionViewController::IsRequestingSiteAccess(
+    content::WebContents* web_contents) const {
+  return GetSiteInteraction(web_contents) ==
+         extensions::SitePermissionsHelper::SiteInteraction::kWithheld;
 }
 
 void ExtensionActionViewController::HidePopup() {

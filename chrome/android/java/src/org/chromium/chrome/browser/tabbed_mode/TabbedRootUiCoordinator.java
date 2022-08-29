@@ -13,7 +13,6 @@ import android.graphics.Bitmap;
 import android.os.Bundle;
 import android.text.TextUtils;
 import android.view.ViewGroup;
-import android.view.ViewStub;
 
 import androidx.annotation.ColorInt;
 import androidx.annotation.NonNull;
@@ -594,6 +593,8 @@ public class TabbedRootUiCoordinator extends RootUiCoordinator {
 
     @Override
     public void onDestroy() {
+        FeatureNotificationUtils.unregisterIPHCallback(FeatureType.DEFAULT_BROWSER);
+
         if (mSystemUiCoordinator != null) mSystemUiCoordinator.destroy();
 
         if (mOfflineIndicatorController != null) {
@@ -1053,6 +1054,45 @@ public class TabbedRootUiCoordinator extends RootUiCoordinator {
                         }));
 
         return incognitoReauthCoordinatorFactory;
+    }
+
+    @Override
+    protected IncognitoReauthCoordinatorFactory getIncognitoReauthCoordinatorFactory() {
+        // TODO(crbug.com/1315676): When the refactor is enabled by default, use
+        // |tabSwitcherCustomView| directly instead of the supplier.
+        OneshotSupplier<TabSwitcherCustomViewManager> tabSwitcherCustomViewSupplier =
+                new OneshotSupplierImpl<>();
+        if (ReturnToChromeUtil.isTabSwitcherOnlyRefactorEnabled(mActivity)
+                && mActivityType == ActivityType.TABBED) {
+            ((OneshotSupplierImpl) tabSwitcherCustomViewSupplier)
+                    .set(mTabSwitcherSupplier.get().getTabSwitcherCustomViewManager());
+        } else {
+            tabSwitcherCustomViewSupplier =
+                    mStartSurfaceSupplier.get().getTabSwitcherCustomViewManagerSupplier();
+        }
+
+        // TODO(crbug.com/1324211, crbug.com/1227656) : Refactor below to remove
+        // IncognitoReauthTopToolbarDelegate and pass TopToolbarInteractabilityManager.
+        IncognitoReauthTopToolbarDelegate incognitoReauthTopToolbarDelegate =
+                new IncognitoReauthTopToolbarDelegate() {
+                    @Override
+                    public int disableNewTabButton() {
+                        return mToolbarManager.getTopToolbarInteractabilityManager()
+                                .disableNewTabButton();
+                    }
+
+                    @Override
+                    public void enableNewTabButton(int clientToken) {
+                        mToolbarManager.getTopToolbarInteractabilityManager().enableNewTabButton(
+                                clientToken);
+                    }
+                };
+
+        return new IncognitoReauthCoordinatorFactory(mActivity, mTabModelSelectorSupplier.get(),
+                mModalDialogManagerSupplier.get(), new IncognitoReauthManager(),
+                new SettingsLauncherImpl(), tabSwitcherCustomViewSupplier,
+                incognitoReauthTopToolbarDelegate, mLayoutManager,
+                /*isTabbedActivity=*/true);
     }
 
     @Override
@@ -1976,5 +2016,10 @@ public class TabbedRootUiCoordinator extends RootUiCoordinator {
         } else {
             mActivity.setTitle(title + ": " + subTitle);
         }
+    }
+
+    @VisibleForTesting
+    public static void setDisableStatusIndicatorAnimationsForTesting(boolean disable) {
+        sDisableStatusIndicatorAnimations = disable;
     }
 }

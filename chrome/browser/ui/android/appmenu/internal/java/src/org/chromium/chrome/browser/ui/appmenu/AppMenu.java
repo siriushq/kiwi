@@ -308,6 +308,10 @@ class AppMenu implements OnKeyListener {
                         anchorView.getRootView().getLayoutDirection());
         mPopup.setContentView(contentView);
 
+        if (popupHeight + popupPosition[1] > visibleDisplayFrame.bottom) {
+            mPopup.setHeight(visibleDisplayFrame.height());
+        }
+
         try {
             mPopup.showAtLocation(
                     anchorView.getRootView(),
@@ -674,6 +678,11 @@ class AppMenu implements OnKeyListener {
     /**
      * @param reporter A means of reporting an exception without crashing.
      */
+    static void setExceptionReporter(Callback<Throwable> reporter) {
+        sExceptionReporter = reporter;
+    }
+
+    /** @param reporter A means of reporting an exception without crashing. */
     static void setExceptionReporter(Callback<Throwable> reporter) {
         sExceptionReporter = reporter;
     }
