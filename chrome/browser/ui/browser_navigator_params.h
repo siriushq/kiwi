@@ -72,7 +72,7 @@ struct OpenURLParams;
 
 // TODO(thestig): Split or ifdef out more fields that are not used on Android.
 struct NavigateParams {
-#if BUILDFLAG(IS_ANDROID)
+#if 0
   explicit NavigateParams(
       std::unique_ptr<content::WebContents> contents_to_insert);
 #else
