@@ -11,6 +11,7 @@
 
 #include "base/containers/flat_set.h"
 #include "base/functional/callback_forward.h"
+#include "base/functional/function_ref.h"
 #include "base/lazy_instance.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/raw_ref.h"
@@ -22,8 +23,6 @@
 #if BUILDFLAG(IS_ANDROID)
 #error This file should only be included on desktop.
 #endif
-
-enum class BrowserClosingStatus;
 
 class Browser;
 class Profile;
@@ -63,7 +62,8 @@ class BrowserList {
   BrowserList(const BrowserList&) = delete;
   BrowserList& operator=(const BrowserList&) = delete;
 
-  // Returns the last active browser for this list.
+  // TODO(crbug.com/431671448): Prefer `GetLastActiveBrowserWindowInterface()`,
+  // this method is being deprecated.
   Browser* GetLastActive() const;
 
   const_iterator begin() const { return browsers_.begin(); }
@@ -74,6 +74,13 @@ class BrowserList {
 
   Browser* get(size_t index) const { return browsers_[index]; }
 
+  // Enumerate the current browser and the new browser in-order.
+  void ForEachCurrentAndNewBrowser(
+      base::FunctionRef<void(Browser*)> on_browser);
+
+  // Enumerate the current browser in-order.
+  void ForEachCurrentBrowser(base::FunctionRef<void(Browser*)> on_browser);
+
   // Returns iterated access to list of open browsers ordered by activation. The
   // underlying data structure is a vector and we push_back on recent access so
   // a reverse iterator gives the latest accessed browser first.
@@ -82,13 +89,6 @@ class BrowserList {
   }
   const_reverse_iterator end_browsers_ordered_by_activation() const {
     return browsers_ordered_by_activation_.rend();
-  }
-
-  // Convenience method for iterating over browsers in activation order.
-  // Example:
-  // for (Browser* browser : BrowserList::GetInstance()->OrderedByActivation())
-  BrowsersOrderedByActivationRange OrderedByActivation() const {
-    return {raw_ref(*this)};
   }
 
   // Returns the set of browsers that are currently in the closing state.
@@ -124,11 +124,6 @@ class BrowserList {
 
   // Notifies the observers when the current active browser becomes not active.
   static void NotifyBrowserNoLongerActive(Browser* browser);
-
-  // Notifies the observers that the attempted closure of `browser` was
-  // cancelled for a certain `reason`.
-  static void NotifyBrowserCloseCancelled(Browser* browser,
-                                          BrowserClosingStatus reason);
 
   // Notifies the observers when browser close was started. This may be called
   // more than once for a particular browser.

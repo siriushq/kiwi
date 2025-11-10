@@ -17,12 +17,15 @@
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/state_store.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension_id.h"
 #include "ui/gfx/codec/png_codec.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/image/image_skia_rep.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 
@@ -196,8 +199,7 @@ ExtensionActionStorageManager::ExtensionActionStorageManager(
     store->RegisterKey(kBrowserActionStorageKey);
 }
 
-ExtensionActionStorageManager::~ExtensionActionStorageManager() {
-}
+ExtensionActionStorageManager::~ExtensionActionStorageManager() = default;
 
 void ExtensionActionStorageManager::OnExtensionLoaded(
     content::BrowserContext* browser_context,

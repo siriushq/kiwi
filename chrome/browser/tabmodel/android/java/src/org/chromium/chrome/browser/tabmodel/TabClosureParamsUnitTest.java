@@ -27,7 +27,6 @@ import java.util.List;
 /** Unit tests for {@link TabClosureParams}. */
 @RunWith(BaseRobolectricTestRunner.class)
 public class TabClosureParamsUnitTest {
-    private static final int ROOT_ID = 1589;
     private static final Token TAB_GROUP_ID = new Token(4378L, 73489L);
 
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
@@ -35,7 +34,6 @@ public class TabClosureParamsUnitTest {
     @Mock private TabGroupModelFilter mTabGroupModelFilter;
     @Mock private Tab mTab1;
     @Mock private Tab mTab2;
-    @Mock private Tab mTab3;
     @Mock private Runnable mUndoRunnable;
 
     @Test
@@ -119,8 +117,7 @@ public class TabClosureParamsUnitTest {
     @Test
     public void testCloseTabsParams_TabGroup() {
         List<Tab> tabs = List.of(mTab1, mTab2);
-        when(mTabGroupModelFilter.getRootIdFromStableId(TAB_GROUP_ID)).thenReturn(ROOT_ID);
-        when(mTabGroupModelFilter.getRelatedTabListForRootId(ROOT_ID)).thenReturn(tabs);
+        when(mTabGroupModelFilter.getTabsInGroup(TAB_GROUP_ID)).thenReturn(tabs);
         TabClosureParams params =
                 TabClosureParams.forCloseTabGroup(mTabGroupModelFilter, TAB_GROUP_ID).build();
 

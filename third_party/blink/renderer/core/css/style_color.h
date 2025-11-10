@@ -51,6 +51,7 @@ class ColorProvider;
 
 namespace blink {
 class CalculationValue;
+class CSSToLengthConversionData;
 class CSSValue;
 
 class CORE_EXPORT StyleColor {
@@ -155,10 +156,6 @@ class CORE_EXPORT StyleColor {
                                                     color2_type_);
     }
 
-    bool operator!=(const UnresolvedColorMix& other) const {
-      return !(*this == other);
-    }
-
    private:
     Color::ColorSpace color_interpolation_space_ = Color::ColorSpace::kNone;
     Color::HueInterpolationMethod hue_interpolation_method_ =
@@ -178,7 +175,8 @@ class CORE_EXPORT StyleColor {
                             const CSSValue& channel0,
                             const CSSValue& channel1,
                             const CSSValue& channel2,
-                            const CSSValue* alpha);
+                            const CSSValue* alpha,
+                            const CSSToLengthConversionData& conversion_data);
     virtual ~UnresolvedRelativeColor() = default;
     void Trace(Visitor* visitor) const override;
     CSSValue* ToCSSValue() const override;
@@ -194,10 +192,10 @@ class CORE_EXPORT StyleColor {
     bool alpha_was_specified_ = false;
 
     // nullptr on any of these fields represents `none`.
-    scoped_refptr<const CalculationValue> channel0_;
-    scoped_refptr<const CalculationValue> channel1_;
-    scoped_refptr<const CalculationValue> channel2_;
-    scoped_refptr<const CalculationValue> alpha_;
+    Member<const CalculationValue> channel0_;
+    Member<const CalculationValue> channel1_;
+    Member<const CalculationValue> channel2_;
+    Member<const CalculationValue> alpha_;
   };
 
   StyleColor() = default;
@@ -227,6 +225,9 @@ class CORE_EXPORT StyleColor {
     return color_or_unresolved_color_function_.unresolved_color_function !=
            nullptr;
   }
+  bool DependsOnCurrentColor() const {
+    return IsCurrentColor() || IsUnresolvedColorFunction();
+  }
   bool IsSystemColorIncludingDeprecated() const {
     return IsSystemColorIncludingDeprecated(color_keyword_);
   }
@@ -248,13 +249,6 @@ class CORE_EXPORT StyleColor {
   Color Resolve(const Color& current_color,
                 mojom::blink::ColorScheme color_scheme,
                 bool* is_current_color = nullptr) const;
-
-  // Resolve and override the resolved color's alpha channel as specified by
-  // |alpha|.
-  Color ResolveWithAlpha(Color current_color,
-                         mojom::blink::ColorScheme color_scheme,
-                         int alpha,
-                         bool* is_current_color = nullptr) const;
 
   // Re-resolve the current system color keyword. This is needed in cases such
   // as forced colors mode because initial values for some internal forced
@@ -291,10 +285,6 @@ class CORE_EXPORT StyleColor {
 
     return color_or_unresolved_color_function_.color ==
            other.color_or_unresolved_color_function_.color;
-  }
-
-  inline bool operator!=(const StyleColor& other) const {
-    return !(*this == other);
   }
 
  protected:

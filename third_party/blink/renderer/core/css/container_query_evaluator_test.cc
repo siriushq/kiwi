@@ -21,7 +21,6 @@
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/dom_token_list.h"
 #include "third_party/blink/renderer/core/dom/element.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/execution_context/security_context.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
@@ -35,7 +34,7 @@ class ContainerQueryEvaluatorTest : public PageTestBase {
  public:
   void SetUp() override {
     PageTestBase::SetUp();
-    GetDocument().body()->setInnerHTML(R"HTML(
+    GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
       <div id="container-parent">
         <div id="container"></div>
       </div>
@@ -929,7 +928,7 @@ TEST_F(ContainerQueryEvaluatorTest, FindSnapContainer) {
 }
 
 TEST_F(ContainerQueryEvaluatorTest, ScopedCaching) {
-  GetDocument().documentElement()->setHTMLUnsafe(R"HTML(
+  GetDocument().documentElement()->SetHTMLUnsafeWithoutTrustedTypes(R"HTML(
     <div id="host" style="container-name: n1">
       <template shadowrootmode=open>
         <div style="container-name: n1">
@@ -1058,6 +1057,64 @@ TEST_P(UseCountEvalUnknownTest, All) {
   Eval(param.query_string, 100.0, 100.0, type_size, horizontal);
   EXPECT_EQ(GetDocument().IsUseCounted(WebFeature::kContainerQueryEvalUnknown),
             param.contains_unknown);
+}
+
+TEST_F(ContainerQueryEvaluatorTest, FailedTreeScope_UseCounted) {
+  GetDocument().ClearUseCounterForTesting(
+      WebFeature::kContainerNameQueryFailedTreeScope);
+
+  GetDocument().body()->SetHTMLUnsafeWithoutTrustedTypes(R"HTML(
+    <style>
+      @container --foo (width >= 0px) {
+        #target { color: green; }
+      }
+    </style>
+    <div>
+      <template shadowrootmode="open">
+        <div style="container: --foo / inline-size">
+          <slot></slot>
+        </div>
+      </template>
+      <div id="target"></div>
+    </div>
+  )HTML");
+  UpdateAllLifecyclePhasesForTest();
+
+  Element* target = GetDocument().getElementById(AtomicString("target"));
+  EXPECT_EQ(
+      target->ComputedStyleRef().VisitedDependentColor(GetCSSPropertyColor()),
+      Color(0, 128, 0));
+  EXPECT_TRUE(GetDocument().IsUseCounted(
+      WebFeature::kContainerNameQueryFailedTreeScope));
+}
+
+TEST_F(ContainerQueryEvaluatorTest, FailedTreeScope_NotUseCounted) {
+  GetDocument().ClearUseCounterForTesting(
+      WebFeature::kContainerNameQueryFailedTreeScope);
+
+  GetDocument().body()->SetHTMLUnsafeWithoutTrustedTypes(R"HTML(
+    <div id="host" style="container: --foo / inline-size">
+      <template shadowrootmode="open">
+        <style>
+          @container --foo (width >= 0px) {
+            #target { color: green; }
+          }
+        </style>
+        <div id="target"></div>
+      </template>
+    </div>
+  )HTML");
+  UpdateAllLifecyclePhasesForTest();
+
+  Element* target = GetDocument()
+                        .getElementById(AtomicString("host"))
+                        ->GetShadowRoot()
+                        ->getElementById(AtomicString("target"));
+  EXPECT_EQ(
+      target->ComputedStyleRef().VisitedDependentColor(GetCSSPropertyColor()),
+      Color(0, 128, 0));
+  EXPECT_FALSE(GetDocument().IsUseCounted(
+      WebFeature::kContainerNameQueryFailedTreeScope));
 }
 
 }  // namespace blink

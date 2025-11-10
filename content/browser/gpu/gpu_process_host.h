@@ -54,8 +54,8 @@ class BrowserChildProcessBackgroundedBridge;
 class CATransactionGPUCoordinator;
 #endif
 
-class GpuProcessHost : public BrowserChildProcessHostDelegate,
-                       public viz::GpuHostImpl::Delegate {
+class GpuProcessHost final : public BrowserChildProcessHostDelegate,
+                             public viz::GpuHostImpl::Delegate {
  public:
   static int GetGpuCrashCount();
 
@@ -237,6 +237,9 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
 
   // Whether we actually launched a GPU process.
   bool process_launched_;
+
+  // When the process was successfully launched.
+  base::TimeTicks process_start_time_;
 
   GpuTerminationOrigin termination_origin_ =
       GpuTerminationOrigin::kUnknownOrigin;

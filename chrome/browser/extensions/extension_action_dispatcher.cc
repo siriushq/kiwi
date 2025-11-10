@@ -14,7 +14,10 @@
 #include "extensions/browser/extension_action_manager.h"
 #include "extensions/browser/extension_event_histogram_value.h"
 #include "extensions/browser/extension_prefs.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/mojom/context_type.mojom.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 
@@ -140,7 +143,7 @@ void ExtensionActionDispatcher::DispatchEventToExtension(
 
   auto event = std::make_unique<Event>(histogram_value, event_name,
                                        std::move(event_args), context);
-  event->user_gesture = EventRouter::USER_GESTURE_ENABLED;
+  event->user_gesture = EventRouter::UserGestureState::kEnabled;
   EventRouter::Get(context)->DispatchEventToExtension(extension_id,
                                                       std::move(event));
 }

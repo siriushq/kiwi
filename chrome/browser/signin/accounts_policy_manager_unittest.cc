@@ -5,31 +5,30 @@
 #include "chrome/browser/signin/accounts_policy_manager.h"
 
 #include "base/memory/raw_ptr.h"
+#include "base/memory/weak_ptr.h"
 #include "build/buildflag.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/signin/accounts_policy_manager_factory.h"
 #include "chrome/browser/signin/chrome_signin_client_factory.h"
 #include "chrome/browser/signin/identity_test_environment_profile_adaptor.h"
 #include "chrome/browser/signin/signin_util.h"
-#include "chrome/test/base/scoped_testing_local_state.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
 #include "components/policy/core/common/features.h"
+#include "components/prefs/pref_service.h"
 #include "components/signin/public/base/signin_pref_names.h"
 #include "components/signin/public/identity_manager/identity_test_environment.h"
 #include "content/public/test/browser_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 namespace {
 
-const char kTestEmail[] = "me@gmail.com";
-const char kTestEmail2[] = "me2@gmail.com";
-const char kExampleEmail[] = "me@example.com";
+constexpr char kTestEmail[] = "me@gmail.com";
+constexpr char kTestEmail2[] = "me2@gmail.com";
+constexpr char kExampleEmail[] = "me@example.com";
 
 }  // namespace
-#endif  //  BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 
 class AccountsPolicyManagerTest : public testing::Test {
  public:
@@ -52,17 +51,17 @@ class AccountsPolicyManagerTest : public testing::Test {
   void CreateTestingProfile() {
     DCHECK(!profile_);
 
-    profile_ = profile_manager_.CreateTestingProfile(
-        "accounts_policy_manager_test_profile_path",
-        IdentityTestEnvironmentProfileAdaptor::
-            GetIdentityTestEnvironmentFactories());
+    profile_ =
+        profile_manager_
+            .CreateTestingProfile("accounts_policy_manager_test_profile_path",
+                                  IdentityTestEnvironmentProfileAdaptor::
+                                      GetIdentityTestEnvironmentFactories())
+            ->GetWeakPtr();
     identity_test_env_adaptor_ =
-        std::make_unique<IdentityTestEnvironmentProfileAdaptor>(profile_);
+        std::make_unique<IdentityTestEnvironmentProfileAdaptor>(profile_.get());
 
-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC)
     AccountsPolicyManagerFactory::GetForProfile(GetProfile())
         ->SetHideUIForTesting(true);
-#endif
   }
 
   void DestroyProfile() {
@@ -72,11 +71,13 @@ class AccountsPolicyManagerTest : public testing::Test {
         "accounts_policy_manager_test_profile_path");
   }
 
-  PrefService* GetLocalState() { return profile_manager_.local_state()->Get(); }
+  PrefService* GetLocalState() {
+    return TestingBrowserProcess::GetGlobal()->local_state();
+  }
 
-  TestingProfile* GetProfile() {
+  Profile* GetProfile() {
     DCHECK(profile_);
-    return profile_;
+    return profile_.get();
   }
 
   TestingProfileManager* GetProfileManager() { return &profile_manager_; }
@@ -97,21 +98,11 @@ class AccountsPolicyManagerTest : public testing::Test {
  private:
   content::BrowserTaskEnvironment task_environment_;
   TestingProfileManager profile_manager_;
-  raw_ptr<TestingProfile, DanglingUntriaged> profile_ = nullptr;
+  base::WeakPtr<Profile> profile_ = nullptr;
   std::unique_ptr<IdentityTestEnvironmentProfileAdaptor>
       identity_test_env_adaptor_;
 };
 
-#if !BUILDFLAG(IS_CHROMEOS)
-// All primary accounts are allowed on ChromeOS and Lacros, so this the
-// AccountsPolicyManagerTest does not clear the primary account on
-// ChromeOS.
-//
-// TODO(msarda): Exclude |AccountsPolicyManager| from the ChromeOS
-// build.
-//
-// TODO(msarda): These tests are valid for secondary profiles on Lacros. Enable
-// them on Lacros.
 TEST_F(AccountsPolicyManagerTest, ClearPrimarySyncAccountWhenSigninNotAllowed) {
   GetIdentityTestEnv()->MakePrimaryAccountAvailable(
       "test@foo.com", signin::ConsentLevel::kSync);
@@ -136,7 +127,6 @@ TEST_F(AccountsPolicyManagerTest,
       signin::ConsentLevel::kSignin));
 }
 
-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC)
 TEST_F(AccountsPolicyManagerTest, ClearProfileWhenSigninAndSignoutNotAllowed) {
   GetIdentityTestEnv()->MakePrimaryAccountAvailable(
       "test@foo.com", signin::ConsentLevel::kSync);
@@ -264,6 +254,3 @@ TEST_F(AccountsPolicyManagerTest, ClearProfileUnallowedAccountsDisabled) {
   EXPECT_TRUE(identity_manager()->HasAccountWithRefreshToken(account_id2));
   EXPECT_TRUE(identity_manager()->HasAccountWithRefreshToken(account_id3));
 }
-#endif  // #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC)
-
-#endif  // !BUILDFLAG(IS_CHROMEOS)

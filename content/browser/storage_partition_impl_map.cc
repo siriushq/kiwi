@@ -23,6 +23,7 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
 #include "build/build_config.h"
+#include "components/leveldb_proto/public/proto_database_provider.h"
 #include "content/browser/background_fetch/background_fetch_context.h"
 #include "content/browser/blob_storage/chrome_blob_storage_context.h"
 #include "content/browser/code_cache/generated_code_cache_context.h"
@@ -41,10 +42,9 @@
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/url_constants.h"
-#include "crypto/sha2.h"
+#include "crypto/hash.h"
 #include "services/network/public/cpp/features.h"
 #include "storage/browser/blob/blob_storage_context.h"
-#include "storage/browser/database/database_tracker.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
 
 namespace content {
@@ -75,6 +75,8 @@ const base::FilePath::CharType kDefaultPartitionDirname[] =
     FILE_PATH_LITERAL("def");
 const base::FilePath::CharType kTrashDirname[] =
     FILE_PATH_LITERAL("trash");
+const base::FilePath::CharType kWebSQLDirname[] =
+    FILE_PATH_LITERAL("databases");
 
 // Because partition names are user specified, they can be arbitrarily long
 // which makes them unsuitable for paths names. We use a truncation of a
@@ -304,9 +306,9 @@ base::FilePath StoragePartitionImplMap::GetStoragePartitionPath(
   if (!partition_name.empty()) {
     // For analysis of why we can ignore collisions, see the comment above
     // kPartitionNameHashBytes.
-    uint8_t buffer[kPartitionNameHashBytes];
-    crypto::SHA256HashString(partition_name, buffer, sizeof(buffer));
-    return path.AppendASCII(base::HexEncode(buffer));
+    auto hash = crypto::hash::Sha256(partition_name);
+    auto truncated_hash = base::span(hash).first<kPartitionNameHashBytes>();
+    return path.AppendASCII(base::HexEncode(truncated_hash));
   }
 
   return path.Append(kDefaultPartitionDirname);
@@ -346,6 +348,12 @@ StoragePartitionImpl* StoragePartitionImplMap::Get(
       StoragePartitionImpl::Create(browser_context_, partition_config,
                                    relative_partition_path));
   StoragePartitionImpl* partition = partition_ptr.get();
+
+  if (partition_config.is_default()) {
+    partition->SetProtoDatabaseProvider(
+        browser_context_->TakeDefaultProtoDatabaseProvider());
+  }
+
   partitions_[partition_config] = std::move(partition_ptr);
   partition->Initialize(fallback_for_blob_urls);
 
@@ -455,18 +463,15 @@ void StoragePartitionImplMap::PostCreateInitialization(
     InitializeResourceContext(browser_context_);
   }
 
-#if !BUILDFLAG(IS_ANDROID)
   if (!in_memory) {
     // Clean up any lingering WebSQL user data on disk, now that WebSQL
-    // has been deprecated and removed for all platforms except Android
-    // WebView (crbug.com/333756088).
+    // has been deprecated and removed for all platforms.
     base::ThreadPool::PostTask(
         FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
         base::BindOnce(
             [](const base::FilePath& dir) { base::DeletePathRecursively(dir); },
-            partition->GetPath().Append(storage::kDatabaseDirectoryName)));
+            partition->GetPath().Append(kWebSQLDirname)));
   }
-#endif  // !BUILDFLAG(IS_ANDROID)
 
   partition->GetBackgroundFetchContext()->Initialize();
 }

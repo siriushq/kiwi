@@ -73,18 +73,15 @@ class CORE_EXPORT NodeEventContext {
   Member<Node> node_;
   Member<EventTarget> current_target_;
   Member<TreeScopeEventContext> tree_scope_event_context_;
+  bool invocation_target_in_shadow_tree_{false};
 };
 
-}  // namespace blink
-
-namespace WTF {
-
 template <>
-struct VectorTraits<blink::NodeEventContext>
-    : SimpleClassVectorTraits<blink::NodeEventContext> {
+struct VectorTraits<NodeEventContext>
+    : SimpleClassVectorTraits<NodeEventContext> {
   static constexpr bool kCanTraceConcurrently = true;
 };
 
-}  // namespace WTF
+}  // namespace blink
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_CORE_DOM_EVENTS_NODE_EVENT_CONTEXT_H_

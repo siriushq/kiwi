@@ -6,7 +6,10 @@
 
 #include "base/functional/bind.h"
 #include "chrome/browser/extensions/blocklist.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 
@@ -14,7 +17,7 @@ BlocklistCheck::BlocklistCheck(Blocklist* blocklist,
                                scoped_refptr<const Extension> extension)
     : PreloadCheck(extension), blocklist_(blocklist) {}
 
-BlocklistCheck::~BlocklistCheck() {}
+BlocklistCheck::~BlocklistCheck() = default;
 
 void BlocklistCheck::Start(ResultCallback callback) {
   callback_ = std::move(callback);

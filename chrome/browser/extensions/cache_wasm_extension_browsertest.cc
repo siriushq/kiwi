@@ -2,11 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
+#include <array>
 #include <string_view>
 
 #include "base/base_paths.h"
@@ -42,7 +38,7 @@ class WasmExtensionCachingBrowserTest
     kMaxValue = kNoCacheHandler
   };
 
-  static constexpr std::string_view kWasmCodeCachingBucketNames[] = {
+  static constexpr std::array kWasmCodeCachingBucketNames = {
       "kMiss", "kHit", "kInvalidCacheEntry", "kNoCacheHandler"};
 
   const base::FilePath& GetExtensionDir() {
@@ -167,7 +163,7 @@ IN_PROC_BROWSER_TEST_F(WasmExtensionCachingBrowserTest, CacheWasmExtensions) {
   })");
 
   // After loading the extension, no WebAssembly has been executed.
-  extensions::ChromeTestExtensionLoader loader(browser()->profile());
+  extensions::ChromeTestExtensionLoader loader(profile());
   LOG(INFO) << "Loading extension, expecting zero misses / hits";
   loader.LoadExtension(GetExtensionDir());
   WaitForHistogramSamples(kHistogram, 0);

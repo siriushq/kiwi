@@ -37,13 +37,13 @@
 /chromeos_login_manager
 /chromeos_text_input
 /cld_2/src
-/cronet_android_mainline_clang/linux-amd64
 /cros
 /custom_tabs_client/src
 /cygwin
 /data_sharing_sdk
 /devserver
 /directxsdk
+/dragonbox/src
 /edk2
 /elfutils/src
 /espresso/lib/
@@ -79,6 +79,7 @@
 /libgifcodec
 /libjingle/source
 /libupnp
+/libva-fake-driver/src
 /llvm
 /llvm-allocated-type
 /llvm-bootstrap
@@ -87,6 +88,7 @@
 /llvm-build/
 /mesa/src
 /microsoft_dxheaders/src
+/webauthn/src
 /mingw-w64
 /mkl
 /mocha
@@ -117,6 +119,7 @@
 /qemu-linux-arm64
 /qemu-linux-x64
 /qemu-mac-x64
+/readability
 /rust-src
 /rust-toolchain-intermediate
 /rust-toolchain/
@@ -151,6 +154,7 @@
 /vulkan-tools/src
 /vulkan-utility-libraries/src
 /vulkan-validation-layers/src
+/wasm_tts_engine/src
 /webdriver/python/selenium
 /webgl
 /webpagereplay

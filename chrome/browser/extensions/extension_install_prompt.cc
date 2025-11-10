@@ -20,6 +20,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/extensions/extension_install_ui.h"
 #include "chrome/common/buildflags.h"
+#include "chrome/grit/branded_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
 #include "components/strings/grit/components_strings.h"
@@ -29,6 +30,7 @@
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_util.h"
 #include "extensions/browser/image_loader.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_features.h"
 #include "extensions/common/extension_resource.h"
@@ -44,6 +46,8 @@
 #include "ui/base/ui_base_types.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/image/image_skia_rep.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 using extensions::Extension;
 using extensions::Manifest;
@@ -87,8 +91,7 @@ ExtensionInstallPrompt::Prompt::Prompt(PromptType type)
   DCHECK_NE(type_, NUM_PROMPT_TYPES);
 }
 
-ExtensionInstallPrompt::Prompt::~Prompt() {
-}
+ExtensionInstallPrompt::Prompt::~Prompt() = default;
 
 void ExtensionInstallPrompt::Prompt::AddPermissionSet(
     const PermissionSet& permissions) {
@@ -120,6 +123,12 @@ void ExtensionInstallPrompt::Prompt::SetWebstoreData(
   has_webstore_data_ = true;
 }
 
+void ExtensionInstallPrompt::Prompt::SetInitialExtensionsProviderName(
+    std::u16string initial_extensions_provider_name) {
+  initial_extensions_provider_name_ =
+      std::move(initial_extensions_provider_name);
+}
+
 std::u16string ExtensionInstallPrompt::Prompt::GetDialogTitle() const {
   int id = -1;
   switch (type_) {
@@ -133,12 +142,19 @@ std::u16string ExtensionInstallPrompt::Prompt::GetDialogTitle() const {
       id = IDS_EXTENSION_PERMISSIONS_PROMPT_TITLE;
       break;
     case EXTERNAL_INSTALL_PROMPT:
-      if (extension_->is_app())
+      if (extension_->is_app()) {
         id = IDS_EXTENSION_EXTERNAL_INSTALL_PROMPT_TITLE_APP;
-      else if (extension_->is_theme())
+      } else if (extension_->is_theme()) {
         id = IDS_EXTENSION_EXTERNAL_INSTALL_PROMPT_TITLE_THEME;
-      else
+      } else if (!initial_extensions_provider_name_.empty()) {
+        return l10n_util::GetStringFUTF16(
+            IDS_EXTENSION_EXTERNAL_INITIAL_INSTALL_PROMPT_TITLE_EXTENSION,
+            initial_extensions_provider_name_,
+            extensions::util::GetFixupExtensionNameForUIDisplay(
+                extension_->name()));
+      } else {
         id = IDS_EXTENSION_EXTERNAL_INSTALL_PROMPT_TITLE_EXTENSION;
+      }
       break;
     case REMOTE_INSTALL_PROMPT:
       id = IDS_EXTENSION_REMOTE_INSTALL_PROMPT_TITLE;
@@ -328,16 +344,15 @@ size_t ExtensionInstallPrompt::Prompt::GetPermissionCount() const {
   return prompt_permissions_.permissions.size();
 }
 
+extensions::InstallPromptPermissions
+ExtensionInstallPrompt::Prompt::GetPermissions() const {
+  return prompt_permissions_;
+}
+
 std::u16string ExtensionInstallPrompt::Prompt::GetPermission(
     size_t index) const {
   CHECK_LT(index, prompt_permissions_.permissions.size());
   return prompt_permissions_.permissions[index];
-}
-
-std::u16string ExtensionInstallPrompt::Prompt::GetPermissionsDetails(
-    size_t index) const {
-  CHECK_LT(index, prompt_permissions_.details.size());
-  return prompt_permissions_.details[index];
 }
 
 void ExtensionInstallPrompt::Prompt::AddObserver(Observer* observer) {
@@ -427,7 +442,7 @@ ExtensionInstallPrompt::ExtensionInstallPrompt(content::WebContents* contents)
                    ? Profile::FromBrowserContext(contents->GetBrowserContext())
                    : nullptr),
       extension_(nullptr),
-      install_ui_(std::make_unique<ExtensionInstallUI>(profile_)),
+      install_ui_(ExtensionInstallUI::Create(profile_)),
       show_params_(new ExtensionInstallPromptShowParams(contents)),
       did_call_show_dialog_(false) {}
 
@@ -435,13 +450,12 @@ ExtensionInstallPrompt::ExtensionInstallPrompt(Profile* profile,
                                                gfx::NativeWindow native_window)
     : profile_(profile),
       extension_(nullptr),
-      install_ui_(std::make_unique<ExtensionInstallUI>(profile_)),
+      install_ui_(ExtensionInstallUI::Create(profile_)),
       show_params_(
           new ExtensionInstallPromptShowParams(profile, native_window)),
       did_call_show_dialog_(false) {}
 
-ExtensionInstallPrompt::~ExtensionInstallPrompt() {
-}
+ExtensionInstallPrompt::~ExtensionInstallPrompt() = default;
 
 void ExtensionInstallPrompt::ShowDialog(
     DoneCallback done_callback,

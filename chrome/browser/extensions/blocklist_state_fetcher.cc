@@ -9,17 +9,23 @@
 #include "base/strings/escape.h"
 #include "base/task/single_thread_task_runner.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/safe_browsing/safe_browsing_service.h"
 #include "chrome/common/safe_browsing/crx_info.pb.h"
 #include "components/safe_browsing/core/browser/db/v4_protocol_manager_util.h"
 #include "components/safe_browsing/core/common/features.h"
 #include "content/public/browser/browser_thread.h"
+#include "extensions/buildflags/buildflags.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/cpp/simple_url_loader.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
 #include "url/gurl.h"
+
+#if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
+#include "chrome/browser/safe_browsing/safe_browsing_service.h"
+#endif
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 using content::BrowserThread;
 
@@ -39,6 +45,7 @@ void BlocklistStateFetcher::Request(const std::string& id,
                                     RequestCallback callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (!safe_browsing_config_) {
+#if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
     if (g_browser_process && g_browser_process->safe_browsing_service()) {
       SetSafeBrowsingConfig(
           g_browser_process->safe_browsing_service()->GetV4ProtocolConfig());
@@ -47,6 +54,11 @@ void BlocklistStateFetcher::Request(const std::string& id,
           FROM_HERE, base::BindOnce(std::move(callback), BLOCKLISTED_UNKNOWN));
       return;
     }
+#else
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE, base::BindOnce(std::move(callback), BLOCKLISTED_UNKNOWN));
+    return;
+#endif
   }
 
   bool request_already_sent = base::Contains(callbacks_, id);

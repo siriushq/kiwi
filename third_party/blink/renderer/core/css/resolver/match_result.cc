@@ -42,15 +42,19 @@ namespace blink {
 
 void MatchedProperties::Trace(Visitor* visitor) const {
   visitor->Trace(properties);
+  visitor->Trace(env_bindings);
 }
 
 void MatchResult::AddMatchedProperties(const CSSPropertyValueSet* properties,
-                                       const MatchedProperties::Data& data) {
-  MatchedProperties::Data new_data = data;
-  new_data.tree_order = current_tree_order_;
+                                       const CustomEnvBindings* env_bindings,
+                                       MatchedProperties::Data data) {
+  unsigned env_bindings_hash = env_bindings ? env_bindings->GetHash() : 0;
+
+  data.tree_order = current_tree_order_;
   matched_properties_.emplace_back(const_cast<CSSPropertyValueSet*>(properties),
-                                   new_data);
-  matched_properties_hashes_.emplace_back(properties->GetHash(), new_data);
+                                   env_bindings, data);
+  matched_properties_hashes_.emplace_back(
+      properties->GetHash() ^ env_bindings_hash, data);
 
   if (properties->ModifiedSinceHashing()) {
     // These properties were mutated as some point after original

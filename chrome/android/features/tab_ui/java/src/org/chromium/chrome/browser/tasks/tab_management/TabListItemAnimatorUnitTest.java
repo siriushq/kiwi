@@ -30,18 +30,18 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.InOrder;
-import org.mockito.Mock;
 import org.mockito.Mockito;
+import org.mockito.Spy;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 import org.robolectric.shadows.ShadowLooper;
 
 import org.chromium.base.Callback;
+import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.chrome.browser.tasks.tab_management.TabListModel.CardProperties.ModelType;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
-import org.chromium.ui.modelutil.SimpleRecyclerViewAdapter;
 import org.chromium.ui.modelutil.SimpleRecyclerViewAdapter.ViewHolder;
 
 /** Unit tests for {@link TabListItemAnimator}. */
@@ -49,12 +49,15 @@ import org.chromium.ui.modelutil.SimpleRecyclerViewAdapter.ViewHolder;
 public class TabListItemAnimatorUnitTest {
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
 
-    @Mock private SimpleRecyclerViewAdapter mAdapter;
+    @Spy
+    private ObservableSupplierImpl<Boolean> mIsAnimatorRunningSupplier =
+            new ObservableSupplierImpl<>(false);
+
     private TabListItemAnimator mItemAnimator;
 
     @Before
     public void setUp() {
-        mItemAnimator = spy(new TabListItemAnimator());
+        mItemAnimator = spy(new TabListItemAnimator(mIsAnimatorRunningSupplier));
     }
 
     private static void emptyBind(PropertyModel model, View view, PropertyKey key) {}
@@ -441,5 +444,33 @@ public class TabListItemAnimatorUnitTest {
 
         verify(mItemAnimator, times(4)).dispatchFinishedWhenAllAnimationsDone();
         assertFalse(mItemAnimator.isRunning());
+    }
+
+    @Test
+    public void animatorRunningSupplier_RunAnimations() {
+        var removedHolder = buildViewHolder(TAB, /* useShrinkCloseAnimation= */ true);
+        mItemAnimator.animateAdd(removedHolder);
+
+        mItemAnimator.runPendingAnimations();
+        ShadowLooper.shadowMainLooper().idle();
+
+        InOrder inOrder = Mockito.inOrder(mIsAnimatorRunningSupplier);
+        inOrder.verify(mIsAnimatorRunningSupplier).set(true);
+        inOrder.verify(mIsAnimatorRunningSupplier).set(false);
+        assertFalse(mIsAnimatorRunningSupplier.get());
+    }
+
+    @Test
+    public void animatorRunningSupplier_EndAnimations() {
+        var removedHolder = buildViewHolder(TAB, /* useShrinkCloseAnimation= */ true);
+        mItemAnimator.animateAdd(removedHolder);
+
+        mItemAnimator.endAnimations();
+        ShadowLooper.shadowMainLooper().idle();
+
+        InOrder inOrder = Mockito.inOrder(mIsAnimatorRunningSupplier);
+        inOrder.verify(mIsAnimatorRunningSupplier).set(true);
+        inOrder.verify(mIsAnimatorRunningSupplier).set(false);
+        assertFalse(mIsAnimatorRunningSupplier.get());
     }
 }

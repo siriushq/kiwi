@@ -12,11 +12,11 @@
 #include <utility>
 
 #include "base/memory/raw_ptr.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/apps/app_service/web_contents_app_id_utils.h"
 #include "chrome/browser/apps/link_capturing/link_capturing_tab_data.h"
 #include "chrome/browser/browser_about_handler.h"
@@ -25,13 +25,14 @@
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/renderer_host/chrome_navigation_ui_data.h"
-#include "chrome/browser/signin/signin_promo.h"
 #include "chrome/browser/tab_contents/tab_util.h"
-#include "chrome/browser/task_manager/web_contents_tags.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
+#include "chrome/browser/ui/browser_navigator_params_utils.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
+#include "chrome/browser/ui/incognito_allowed_url.h"
 #include "chrome/browser/ui/location_bar/location_bar.h"
 #include "chrome/browser/ui/singleton_tabs.h"
 #include "chrome/browser/ui/status_bubble.h"
@@ -42,11 +43,10 @@
 #include "chrome/browser/ui/web_applications/web_app_tabbed_utils.h"
 #include "chrome/browser/web_applications/web_app_helpers.h"
 #include "chrome/browser/web_applications/web_app_tab_helper.h"
-#include "chrome/common/url_constants.h"
+#include "chrome/common/webui_url_constants.h"
 #include "components/captive_portal/core/buildflags.h"
 #include "components/constrained_window/constrained_window_views.h"
 #include "components/no_state_prefetch/browser/no_state_prefetch_manager.h"
-#include "components/password_manager/content/common/web_ui_constants.h"
 #include "components/policy/core/common/policy_pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_url_handler.h"
@@ -63,20 +63,18 @@
 #include "ui/display/screen.h"
 #include "url/url_constants.h"
 
-#if !BUILDFLAG(IS_ANDROID)
-#include "chrome/browser/ui/web_applications/web_app_launch_utils.h"
-#endif  // !BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
+#error This file should only be included on desktop.
+#endif  // BUILDFLAG(IS_ANDROID)
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "ash/public/cpp/multi_user_window_manager.h"
-#include "chrome/browser/ui/ash/multi_user/multi_user_window_manager_helper.h"
+#include "chrome/browser/ui/web_applications/navigation_capturing_process.h"
+#include "chrome/browser/ui/web_applications/web_app_launch_utils.h"
+
+#if BUILDFLAG(IS_CHROMEOS)
+#include "ash/multi_user/multi_user_window_manager.h"
+#include "ash/shell.h"
 #include "chrome/browser/ui/ash/system_web_apps/system_web_app_ui_utils.h"
 #include "components/account_id/account_id.h"
-#endif
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-#include "chrome/browser/lacros/lacros_url_handling.h"
-#include "chromeos/crosapi/cpp/gurl_os_handler_utils.h"
 #endif
 
 #if defined(USE_AURA)
@@ -91,16 +89,6 @@ using content::GlobalRequestID;
 using content::NavigationController;
 using content::WebContents;
 using WebExposedIsolationLevel = content::WebExposedIsolationLevel;
-
-class BrowserNavigatorWebContentsAdoption {
- public:
-  static void AttachTabHelpers(content::WebContents* contents) {
-    TabHelpers::AttachTabHelpers(contents);
-
-    // Make the tab show up in the task manager.
-    task_manager::WebContentsTags::CreateForTabContents(contents);
-  }
-};
 
 namespace {
 
@@ -195,21 +183,18 @@ Browser::ValueSpecified GetOriginSpecified(const NavigateParams& params) {
 // incompatible. The tab index will be -1 unless a singleton or tab switch
 // was requested, in which case it might be the target tab index, or -1
 // if not found.
-std::tuple<Browser*, int> GetBrowserAndTabForDisposition(
+std::tuple<BrowserWindowInterface*, int> GetBrowserAndTabForDisposition(
     const NavigateParams& params) {
   Profile* profile = params.initiating_profile;
 
   switch (params.disposition) {
-    case WindowOpenDisposition::SWITCH_TO_TAB:
-#if !BUILDFLAG(IS_ANDROID)
-    {
-      std::pair<Browser*, int> browser_and_index =
+    case WindowOpenDisposition::SWITCH_TO_TAB: {
+      std::pair<BrowserWindowInterface*, int> browser_and_index =
           GetIndexAndBrowserOfExistingTab(profile, params);
       if (browser_and_index.first) {
         return browser_and_index;
       }
     }
-#endif
       [[fallthrough]];
     case WindowOpenDisposition::CURRENT_TAB:
       if (params.browser) {
@@ -230,7 +215,7 @@ std::tuple<Browser*, int> GetBrowserAndTabForDisposition(
       // it would load in a random window, potentially opening a second copy.
       // Instead, make an extra effort to see if there's an already open copy.
       if (!WindowCanOpenTabs(params)) {
-        std::pair<Browser*, int> browser_and_index =
+        std::pair<BrowserWindowInterface*, int> browser_and_index =
             GetIndexAndBrowserOfExistingTab(profile, params);
         if (browser_and_index.first) {
           return browser_and_index;
@@ -248,9 +233,7 @@ std::tuple<Browser*, int> GetBrowserAndTabForDisposition(
       // Find a compatible window and re-execute this command in it. Otherwise
       // re-run with NEW_WINDOW.
       return {GetOrCreateBrowser(profile, params.user_gesture), -1};
-    case WindowOpenDisposition::NEW_PICTURE_IN_PICTURE:
-#if !BUILDFLAG(IS_ANDROID)
-    {
+    case WindowOpenDisposition::NEW_PICTURE_IN_PICTURE: {
       // The picture in picture window should be part of the opener's web app,
       // if any.
       std::string app_name;
@@ -275,7 +258,7 @@ std::tuple<Browser*, int> GetBrowserAndTabForDisposition(
       const gfx::NativeWindow native_window =
           browser_window ? browser_window->GetNativeWindow()
                          : gfx::NativeWindow();
-      const display::Screen* const screen = display::Screen::GetScreen();
+      const display::Screen* const screen = display::Screen::Get();
       const display::Display display =
           browser_window ? screen->GetDisplayNearestWindow(native_window)
                          : screen->GetDisplayForNewWindows();
@@ -288,12 +271,6 @@ std::tuple<Browser*, int> GetBrowserAndTabForDisposition(
       browser_params.omit_from_session_restore = true;
       return {Browser::Create(browser_params), -1};
     }
-#else   // !IS_ANDROID
-      // For TYPE_PICTURE_IN_PICTURE
-      NOTIMPLEMENTED_LOG_ONCE();
-      return {nullptr, -1};
-#endif  // !IS_ANDROID
-
     case WindowOpenDisposition::NEW_POPUP: {
       // Make a new popup window.
       // Coerce app-style if |source| represents an app.
@@ -313,8 +290,8 @@ std::tuple<Browser*, int> GetBrowserAndTabForDisposition(
         browser_params.trusted_source = params.trusted_source;
         browser_params.initial_bounds = params.window_features.bounds;
         browser_params.initial_origin_specified = GetOriginSpecified(params);
-        browser_params.can_maximize = !params.is_tab_modal_popup;
-        browser_params.can_fullscreen = !params.is_tab_modal_popup;
+        browser_params.can_maximize = !params.is_tab_modal_popup_deprecated;
+        browser_params.can_fullscreen = !params.is_tab_modal_popup_deprecated;
         return {Browser::Create(browser_params), -1};
       }
       Browser::CreateParams browser_params =
@@ -418,58 +395,6 @@ Profile* GetSourceProfile(NavigateParams* params) {
   return params->initiating_profile;
 }
 
-base::WeakPtr<content::NavigationHandle> LoadURLInContents(
-    WebContents* target_contents,
-    const GURL& url,
-    NavigateParams* params) {
-  NavigationController::LoadURLParams load_url_params(url);
-  load_url_params.initiator_frame_token = params->initiator_frame_token;
-  load_url_params.initiator_process_id = params->initiator_process_id;
-  load_url_params.initiator_origin = params->initiator_origin;
-  load_url_params.initiator_base_url = params->initiator_base_url;
-  load_url_params.source_site_instance = params->source_site_instance;
-  load_url_params.referrer = params->referrer;
-  load_url_params.frame_name = params->frame_name;
-  load_url_params.frame_tree_node_id = params->frame_tree_node_id;
-  load_url_params.redirect_chain = params->redirect_chain;
-  load_url_params.transition_type = params->transition;
-  load_url_params.extra_headers = params->extra_headers;
-  load_url_params.should_replace_current_entry =
-      params->should_replace_current_entry;
-  load_url_params.is_renderer_initiated = params->is_renderer_initiated;
-  load_url_params.started_from_context_menu = params->started_from_context_menu;
-  load_url_params.has_user_gesture = params->user_gesture;
-  load_url_params.blob_url_loader_factory = params->blob_url_loader_factory;
-  load_url_params.input_start = params->input_start;
-  load_url_params.was_activated = params->was_activated;
-  load_url_params.href_translate = params->href_translate;
-  load_url_params.reload_type = params->reload_type;
-  load_url_params.impression = params->impression;
-  load_url_params.suggested_system_entropy = params->suggested_system_entropy;
-
-  // |frame_tree_node_id| is invalid for main frame navigations.
-  if (params->frame_tree_node_id.is_null()) {
-    bool force_no_https_upgrade =
-        params->url_typed_with_http_scheme ||
-        params->captive_portal_window_type !=
-            captive_portal::CaptivePortalWindowType::kNone;
-    std::unique_ptr<ChromeNavigationUIData> navigation_ui_data =
-        ChromeNavigationUIData::CreateForMainFrameNavigation(
-            target_contents, params->disposition,
-            params->is_using_https_as_default_scheme, force_no_https_upgrade);
-    navigation_ui_data->set_navigation_initiated_from_sync(
-        params->navigation_initiated_from_sync);
-    load_url_params.navigation_ui_data = std::move(navigation_ui_data);
-  }
-
-  if (params->post_data) {
-    load_url_params.load_type = NavigationController::LOAD_TYPE_HTTP_POST;
-    load_url_params.post_data = params->post_data;
-  }
-
-  return target_contents->GetController().LoadURLWithParams(load_url_params);
-}
-
 // This class makes sure the Browser object held in |params| is made visible
 // by the time it goes out of scope, provided |params| wants it to be shown.
 class ScopedBrowserShower {
@@ -486,12 +411,13 @@ class ScopedBrowserShower {
     if (params_->window_action == NavigateParams::SHOW_WINDOW_INACTIVE) {
       // TODO(crbug.com/40284685): investigate if SHOW_WINDOW_INACTIVE needs to
       // be supported for tab modal popups.
-      CHECK_EQ(params_->is_tab_modal_popup, false);
+      CHECK_EQ(params_->is_tab_modal_popup_deprecated, false);
       window->ShowInactive();
     } else if (params_->window_action == NavigateParams::SHOW_WINDOW) {
-      if (params_->is_tab_modal_popup) {
+      if (params_->is_tab_modal_popup_deprecated) {
         CHECK_EQ(params_->disposition, WindowOpenDisposition::NEW_POPUP);
         CHECK_NE(source_contents_, nullptr);
+        window->SetIsTabModalPopupDeprecated(true);
         constrained_window::ShowModalDialog(window->GetNativeWindow(),
                                             source_contents_);
       } else {
@@ -543,7 +469,7 @@ std::unique_ptr<content::WebContents> CreateTargetContents(
   if (params.opener) {
     create_params.opener_render_frame_id = params.opener->GetRoutingID();
     create_params.opener_render_process_id =
-        params.opener->GetProcess()->GetID();
+        params.opener->GetProcess()->GetDeprecatedID();
   }
 
   create_params.opened_by_another_window = params.opened_by_another_window;
@@ -558,57 +484,7 @@ std::unique_ptr<content::WebContents> CreateTargetContents(
   }
 #endif
 
-  std::unique_ptr<WebContents> target_contents =
-      WebContents::Create(create_params);
-
-  // New tabs can have WebUI URLs that will make calls back to arbitrary
-  // tab helpers, so the entire set of tab helpers needs to be set up
-  // immediately.
-  BrowserNavigatorWebContentsAdoption::AttachTabHelpers(target_contents.get());
-  apps::SetAppIdForWebContents(params.browser->profile(), target_contents.get(),
-                               params.app_id);
-
-#if BUILDFLAG(ENABLE_CAPTIVE_PORTAL_DETECTION)
-  captive_portal::CaptivePortalTabHelper::FromWebContents(target_contents.get())
-      ->set_window_type(params.captive_portal_window_type);
-#endif
-
-  return target_contents;
-}
-
-bool IsHostAllowedInIncognito(const GURL& url) {
-  std::string scheme = url.scheme();
-  std::string_view host = url.host_piece();
-  if (scheme != content::kChromeUIScheme) {
-    return true;
-  }
-
-  if (host == chrome::kChromeUIChromeSigninHost) {
-#if BUILDFLAG(IS_WIN)
-    // Allow incognito mode for the chrome-signin url if we only want to
-    // retrieve the login scope token without touching any profiles. This
-    // option is only available on Windows for use with Google Credential
-    // Provider for Windows.
-    return signin::GetSigninReasonForEmbeddedPromoURL(url) ==
-           signin_metrics::Reason::kFetchLstOnly;
-#else
-    return false;
-#endif  // BUILDFLAG(IS_WIN)
-  }
-
-  // Most URLs are allowed in incognito; the following are exceptions.
-  // chrome://extensions is on the list because it redirects to
-  // chrome://settings.
-  return host != chrome::kChromeUIAppLauncherPageHost &&
-         host != chrome::kChromeUISettingsHost &&
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-         host != chrome::kChromeUIOSSettingsHost &&
-#endif
-         host != chrome::kChromeUIHelpHost &&
-         host != chrome::kChromeUIHistoryHost &&
-         host != chrome::kChromeUIExtensionsHost &&
-         host != chrome::kChromeUIBookmarksHost &&
-         host != password_manager::kChromeUIPasswordManagerHost;
+  return WebContents::Create(create_params);
 }
 
 }  // namespace
@@ -625,7 +501,7 @@ base::WeakPtr<content::NavigationHandle> Navigate(NavigateParams* params) {
   // If the created window is a partitioned popin, a valid source exists, and
   // the disposition is NEW_POPUP then the resulting popup should be tab-modal.
   // See: https://explainers-by-googlers.github.io/partitioned-popins/
-  params->is_tab_modal_popup |=
+  params->is_tab_modal_popup_deprecated |=
       params->window_features.is_partitioned_popin && params->source_contents &&
       params->disposition == WindowOpenDisposition::NEW_POPUP;
 
@@ -646,6 +522,10 @@ base::WeakPtr<content::NavigationHandle> Navigate(NavigateParams* params) {
     return nullptr;
   }
 
+  if (params->browser && params->browser->IsBrowserClosing()) {
+    return nullptr;
+  }
+
   // Block navigation requests when in locked fullscreen mode. We allow
   // navigation requests in the webapp when locked for OnTask (only relevant for
   // non-web browser scenarios).
@@ -654,11 +534,11 @@ base::WeakPtr<content::NavigationHandle> Navigate(NavigateParams* params) {
   if (source_browser) {
     bool should_block_navigation =
         platform_util::IsBrowserLockedFullscreen(source_browser);
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     if (source_browser->IsLockedForOnTask()) {
       should_block_navigation = false;
     }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
     if (should_block_navigation) {
       return nullptr;
     }
@@ -667,7 +547,7 @@ base::WeakPtr<content::NavigationHandle> Navigate(NavigateParams* params) {
   // Open System Apps in their standalone window if necessary.
   // TODO(crbug.com/40136163): Remove this code after we integrate with intent
   // handling.
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   const std::optional<ash::SystemWebAppType> capturing_system_app_type =
       ash::GetCapturingSystemAppForURL(params->initiating_profile, params->url);
   if (capturing_system_app_type &&
@@ -689,14 +569,6 @@ base::WeakPtr<content::NavigationHandle> Navigate(NavigateParams* params) {
     // the navigation should appear to be cancelled.
     return nullptr;
   }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-
-#if !BUILDFLAG(IS_ANDROID)
-  // Force isolated PWAs to open in an app window.
-  params->force_open_pwa_window =
-      content::SiteIsolationPolicy::ShouldUrlUseApplicationIsolationLevel(
-          params->initiating_profile, params->url);
-  params->open_pwa_window_if_possible |= params->force_open_pwa_window;
 #endif
 
   if (!AdjustNavigateParamsForURL(params)) {
@@ -719,15 +591,6 @@ base::WeakPtr<content::NavigationHandle> Navigate(NavigateParams* params) {
     }
   }
 
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  const GURL& source_url =
-      params->source_contents ? params->source_contents->GetURL() : GURL();
-  if (lacros_url_handling::IsNavigationInterceptable(*params, source_url) &&
-      lacros_url_handling::MaybeInterceptNavigation(params->url)) {
-    return nullptr;
-  }
-#endif
-
   // If no source WebContents was specified, we use the selected one from the
   // target browser. This must happen before GetBrowserAndTabForDisposition()
   // has a chance to replace |params->browser| with another one, but after the
@@ -744,7 +607,6 @@ base::WeakPtr<content::NavigationHandle> Navigate(NavigateParams* params) {
     contents_to_navigate_or_insert = params->switch_to_singleton_tab;
   }
 
-#if !BUILDFLAG(IS_ANDROID)
   // If this is a Picture in Picture window, then notify the pip manager about
   // it. This enables the opener and pip window to stay connected, so that (for
   // example), the pip window does not outlive the opener.
@@ -763,23 +625,30 @@ base::WeakPtr<content::NavigationHandle> Navigate(NavigateParams* params) {
     PictureInPictureWindowManager::GetInstance()->EnterDocumentPictureInPicture(
         params->source_contents, contents_to_navigate_or_insert);
   }
-#endif  // !BUILDFLAG(IS_ANDROID)
 
   // TODO(crbug.com/364657540): Revisit integration with web_application system
   // later if needed.
-  int singleton_index;
+  int singleton_index = -1;
 
-#if !BUILDFLAG(IS_ANDROID)
-  web_app::AppNavigationResult app_navigation_result =
-      web_app::MaybeHandleAppNavigation(*params);
-  std::tie(params->browser, singleton_index) =
-      app_navigation_result.browser_tab_override().has_value()
-          ? *app_navigation_result.browser_tab_override()
-          : GetBrowserAndTabForDisposition(*params);
-#else  // !BUILDFLAG(IS_ANDROID)
-  std::tie(params->browser, singleton_index) =
-      GetBrowserAndTabForDisposition(*params);
-#endif
+  std::unique_ptr<web_app::NavigationCapturingProcess> app_navigation =
+      web_app::NavigationCapturingProcess::MaybeHandleAppNavigation(*params);
+
+  std::optional<web_app::NavigationCapturingOverride> override_params =
+      app_navigation
+          ? app_navigation->GetInitialNavigationParamsOverride(*params)
+          : std::nullopt;
+  if (override_params) {
+    params->browser = override_params->browser();
+    singleton_index = override_params->tab_index().value_or(-1);
+  } else {
+    std::tuple<BrowserWindowInterface*, int> browser_and_index =
+        GetBrowserAndTabForDisposition(*params);
+    params->browser =
+        std::get<0>(browser_and_index) == nullptr
+            ? nullptr
+            : std::get<0>(browser_and_index)->GetBrowserForMigrationOnly();
+    singleton_index = std::get<1>(browser_and_index);
+  }
 
   if (!params->browser) {
     return nullptr;
@@ -809,15 +678,16 @@ base::WeakPtr<content::NavigationHandle> Navigate(NavigateParams* params) {
     ShowSingletonTabOverwritingNTP(params);
     return nullptr;
   }
-  if (params->force_open_pwa_window) {
+  if (content::SiteIsolationPolicy::ShouldUrlUseApplicationIsolationLevel(
+          params->initiating_profile, params->url)) {
     CHECK(web_app::AppBrowserController::IsWebApp(params->browser));
   }
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   if (source_browser && source_browser != params->browser) {
     // When the newly created browser was spawned by a browser which visits
     // another user's desktop, it should be shown on the same desktop as the
     // originating one. (This is part of the desktop separation per profile).
-    auto* window_manager = MultiUserWindowManagerHelper::GetWindowManager();
+    auto* window_manager = ash::Shell::Get()->multi_user_window_manager();
     // Some unit tests have no client instantiated.
     if (window_manager) {
       aura::Window* src_window = source_browser->window()->GetNativeWindow();
@@ -835,13 +705,6 @@ base::WeakPtr<content::NavigationHandle> Navigate(NavigateParams* params) {
     }
   }
 #endif
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  // If Lacros gets here with an internal os:// redirect scheme to Ash, Ash
-  // did not accept the URL. Convert it into a blocked URL instead.
-  if (crosapi::gurl_os_handler_utils::HasOsScheme(params->url)) {
-    params->url = GURL(content::kBlockedURL);
-  }
-#endif
 
   // Navigate() must not return early after this point.
 
@@ -856,7 +719,7 @@ base::WeakPtr<content::NavigationHandle> Navigate(NavigateParams* params) {
 
   // Make sure the Browser is shown if params call for it.
   ScopedBrowserShower shower(params, &contents_to_navigate_or_insert);
-  if (params->is_tab_modal_popup) {
+  if (params->is_tab_modal_popup_deprecated) {
     shower.set_source_contents(params->source_contents);
   }
 
@@ -901,7 +764,16 @@ base::WeakPtr<content::NavigationHandle> Navigate(NavigateParams* params) {
       tab_to_insert = std::make_unique<tabs::TabModel>(
           CreateTargetContents(*params, params->url),
           params->browser->tab_strip_model());
-      contents_to_navigate_or_insert = tab_to_insert->contents();
+      contents_to_navigate_or_insert = tab_to_insert->GetContents();
+
+      apps::SetAppIdForWebContents(params->browser->profile(),
+                                   contents_to_navigate_or_insert,
+                                   params->app_id);
+#if BUILDFLAG(ENABLE_CAPTIVE_PORTAL_DETECTION)
+      captive_portal::CaptivePortalTabHelper::FromWebContents(
+          contents_to_navigate_or_insert)
+          ->set_window_type(params->captive_portal_window_type);
+#endif
     } else {
       // ... otherwise if we're loading in the current tab, the target is the
       // same as the source.
@@ -911,11 +783,16 @@ base::WeakPtr<content::NavigationHandle> Navigate(NavigateParams* params) {
 
     // Try to handle non-navigational URLs that popup dialogs and such, these
     // should not actually navigate.
-    if (!HandleNonNavigationAboutURL(params->url)) {
+    if (!HandleNonNavigationAboutURL(
+            params->url, contents_to_navigate_or_insert->GetBrowserContext())) {
       // Perform the actual navigation, tracking whether it came from the
       // renderer.
-      navigation_handle = LoadURLInContents(contents_to_navigate_or_insert,
-                                            params->url, params);
+      NavigationController::LoadURLParams load_url_params =
+          LoadURLParamsFromNavigateParams(contents_to_navigate_or_insert,
+                                          params);
+      navigation_handle =
+          contents_to_navigate_or_insert->GetController().LoadURLWithParams(
+              load_url_params);
     }
   } else {
     // |contents_to_navigate_or_insert| was specified non-NULL, and so we assume
@@ -937,7 +814,7 @@ base::WeakPtr<content::NavigationHandle> Navigate(NavigateParams* params) {
     // Save data needed for link capturing into apps that cannot otherwise be
     // inferred later in the navigation. These are only needed when the
     // navigation happens in a different tab to the link click.
-    apps::SetLinkCapturingSourceDisposition(tab_to_insert->contents(),
+    apps::SetLinkCapturingSourceDisposition(tab_to_insert->GetContents(),
                                             params->disposition);
   }
 
@@ -983,8 +860,12 @@ base::WeakPtr<content::NavigationHandle> Navigate(NavigateParams* params) {
           content::ReloadType::NORMAL, true);
     } else if (params->path_behavior == NavigateParams::IGNORE_AND_NAVIGATE &&
                contents_to_navigate_or_insert->GetURL() != params->url) {
-      navigation_handle = LoadURLInContents(contents_to_navigate_or_insert,
-                                            params->url, params);
+      NavigationController::LoadURLParams load_url_params =
+          LoadURLParamsFromNavigateParams(contents_to_navigate_or_insert,
+                                          params);
+      navigation_handle =
+          contents_to_navigate_or_insert->GetController().LoadURLWithParams(
+              load_url_params);
     }
 
     // If the singleton tab isn't already selected, select it.
@@ -1022,32 +903,13 @@ base::WeakPtr<content::NavigationHandle> Navigate(NavigateParams* params) {
 
   params->navigated_or_inserted_contents = contents_to_navigate_or_insert;
 
-// At this point, the `params->navigated_or_inserted_contents` is guaranteed to
-// be non null, so perform tasks if the navigation has been captured by a web
-// app, like enqueueing launch params.
-#if !BUILDFLAG(IS_ANDROID)
-  web_app::OnWebAppNavigationAfterWebContentsCreation(
-      std::move(app_navigation_result), *params, navigation_handle);
-#endif  // !BUILDFLAG(IS_ANDROID)
-  return navigation_handle;
-}
-
-bool IsURLAllowedInIncognito(const GURL& url) {
-  if (url.scheme() == content::kViewSourceScheme) {
-    // A view-source URL is allowed in incognito mode only if the URL itself
-    // is allowed in incognito mode. Remove the "view-source:" from the start
-    // of the URL and validate the rest.
-    const size_t scheme_len = strlen(content::kViewSourceScheme);
-    CHECK_GT(url.spec().size(), scheme_len);
-    std::string_view stripped_url_str(url.spec());
-    // Adding +1 for ':' character.
-    stripped_url_str.remove_prefix(scheme_len + 1);
-    const GURL stripped_url(stripped_url_str);
-    if (stripped_url.is_empty()) {
-      return true;
-    }
-    return stripped_url.is_valid() && IsURLAllowedInIncognito(stripped_url);
+  // At this point, the `params->navigated_or_inserted_contents` is guaranteed
+  // to be non null, so perform tasks if the navigation has been captured by a
+  // web app, like enqueueing launch params.
+  if (app_navigation) {
+    web_app::NavigationCapturingProcess::AfterWebContentsCreation(
+        std::move(app_navigation), *params->navigated_or_inserted_contents,
+        navigation_handle.get());
   }
-
-  return IsHostAllowedInIncognito(url);
+  return navigation_handle;
 }

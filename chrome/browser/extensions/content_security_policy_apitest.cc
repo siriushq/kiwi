@@ -6,9 +6,7 @@
 #include "chrome/browser/extensions/chrome_test_extension_loader.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/browser.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/test/base/ui_test_utils.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "extensions/common/extension.h"
@@ -175,13 +173,12 @@ IN_PROC_BROWSER_TEST_F(ExtensionCspApiTest,
   ASSERT_FALSE(Manifest::IsUnpackedLocation(extension->location()));
 
   // Blocking the script load should emit a log.
-  content::WebContents* web_contents =
-      browser()->tab_strip_model()->GetActiveWebContents();
+  content::WebContents* web_contents = GetActiveWebContents();
   content::WebContentsConsoleObserver console_observer(web_contents);
-  console_observer.SetPattern("Refused to load the script '*");
+  console_observer.SetPattern("Loading the script '*' violates the following*");
 
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(
-      browser(), extension->GetResourceURL("page.html")));
+  ASSERT_TRUE(
+      NavigateToURL(web_contents, extension->GetResourceURL("page.html")));
   ASSERT_TRUE(result_catcher.GetNextResult()) << result_catcher.message();
 
   EXPECT_EQ(2u, console_observer.messages().size());

@@ -47,6 +47,7 @@ namespace blink {
 class AddEventListenerOptionsResolved;
 class DOMWindow;
 class Event;
+class EventListenerOptions;
 class ExceptionState;
 class ExecutionContext;
 class LocalDOMWindow;
@@ -240,6 +241,7 @@ class CORE_EXPORT EventTarget : public ScriptWrappable {
   DEFINE_ATTRIBUTE_EVENT_LISTENER(change, kChange)
   DEFINE_ATTRIBUTE_EVENT_LISTENER(click, kClick)
   DEFINE_ATTRIBUTE_EVENT_LISTENER(close, kClose)
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(command, kCommand)
   DEFINE_ATTRIBUTE_EVENT_LISTENER(contentvisibilityautostatechange,
                                   kContentvisibilityautostatechange)
   DEFINE_ATTRIBUTE_EVENT_LISTENER(contextmenu, kContextmenu)
@@ -341,9 +343,10 @@ class CORE_EXPORT EventTarget : public ScriptWrappable {
   virtual bool AddEventListenerInternal(const AtomicString& event_type,
                                         EventListener*,
                                         const AddEventListenerOptionsResolved*);
-  bool RemoveEventListenerInternal(const AtomicString& event_type,
-                                   const EventListener*,
-                                   const EventListenerOptions*);
+  bool RemoveEventListenerInternal(
+      const AtomicString& event_type,
+      const EventListener*,
+      const RegisteredEventListener::OptionsForMatching&);
 
   // Called when an event listener has been successfully added.
   virtual void AddedEventListener(const AtomicString& event_type,
@@ -372,7 +375,11 @@ class CORE_EXPORT EventTarget : public ScriptWrappable {
   // The spec snapshots the array at the beginning of a dispatch so that
   // listeners adding or removing other event listeners during dispatch is
   // done in a consistent way.
-  bool FireEventListeners(Event&, EventTargetData*, EventListenerVector);
+  using EventListenerVectorSnapshot =
+      HeapVector<Member<RegisteredEventListener>, 1>;
+  bool FireEventListeners(Event&,
+                          EventTargetData*,
+                          EventListenerVectorSnapshot);
   void CountLegacyEvents(const AtomicString& legacy_type_name,
                          EventListenerVector*,
                          EventListenerVector*);

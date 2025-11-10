@@ -3,11 +3,11 @@
 // found in the LICENSE file.
 
 #include "base/command_line.h"
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
@@ -128,11 +128,12 @@ class UnloadTest : public InProcessBrowserTest {
   void SetUpCommandLine(base::CommandLine* command_line) override {
     const testing::TestInfo* const test_info =
         testing::UnitTest::GetInstance()->current_test_info();
-    if (strstr(test_info->name(), "BrowserCloseTabWhenOtherTabHasListener") !=
+    if (UNSAFE_TODO(strstr(test_info->name(),
+                           "BrowserCloseTabWhenOtherTabHasListener")) !=
         nullptr) {
       command_line->AppendSwitch(embedder_support::kDisablePopupBlocking);
-    } else if (strstr(test_info->name(), "BrowserTerminateBeforeUnload") !=
-               nullptr) {
+    } else if (UNSAFE_TODO(strstr(test_info->name(),
+                                  "BrowserTerminateBeforeUnload")) != nullptr) {
 #if BUILDFLAG(IS_POSIX)
       DisableSIGTERMHandling();
 #endif
@@ -543,7 +544,7 @@ IN_PROC_BROWSER_TEST_F(UnloadTest,
 
 // Tests terminating the browser with a beforeunload handler.
 // Currently only ChromeOS shuts down gracefully.
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 IN_PROC_BROWSER_TEST_F(UnloadTest, BrowserTerminateBeforeUnload) {
   NavigateToDataURL(BEFORE_UNLOAD_HTML, "beforeunload");
   EXPECT_EQ(kill(base::GetCurrentProcessHandle(), SIGTERM), 0);

@@ -20,11 +20,15 @@
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/cookie_store_factory.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/constants.h"
 #include "net/cookies/cookie_partition_key_collection.h"
+#include "net/extras/sqlite/cookie_crypto_delegate.h"
 #include "net/first_party_sets/first_party_set_metadata.h"
 #include "services/network/cookie_manager.h"
 #include "services/network/restricted_cookie_manager.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 
@@ -151,7 +155,9 @@ void ChromeExtensionCookies::IOData::CreateRestrictedCookieManager(
       std::make_unique<network::RestrictedCookieManager>(
           network::mojom::RestrictedCookieManagerRole::SCRIPT,
           GetOrCreateCookieStore(), network_cookie_settings_, origin,
-          isolation_info, net::CookieSettingOverrides(),
+          isolation_info,
+          /*cookie_setting_overrides=*/net::CookieSettingOverrides(),
+          /*devtools_cookie_setting_overrides=*/net::CookieSettingOverrides(),
           /* null cookies_observer disables logging */
           mojo::NullRemote(), std::move(first_party_set_metadata)),
       std::move(receiver));
@@ -232,6 +238,10 @@ void ChromeExtensionCookies::OnThirdPartyCookieBlockingChanged(
 
 void ChromeExtensionCookies::Shutdown() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  HostContentSettingsMapFactory::GetForProfile(profile_)->RemoveObserver(this);
+  cookie_settings_observation_.Reset();
+  cookie_settings_ = nullptr;
+
   // Async delete on IO thread, sequencing it after any previously posted
   // operations.
   //

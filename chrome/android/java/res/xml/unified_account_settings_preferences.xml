@@ -11,6 +11,7 @@ found in the LICENSE file.
 
     <org.chromium.chrome.browser.sync.settings.CentralAccountCardPreference
         android:key="central_account_card"
+        android:selectable="false"
         app:isPreferenceVisible="true"/>
 
     <org.chromium.chrome.browser.sync.settings.IdentityErrorCardPreference
@@ -42,6 +43,11 @@ found in the LICENSE file.
         android:persistent="false"/>
 
     <org.chromium.components.browser_ui.settings.ChromeSwitchPreference
+        android:key="account_section_extensions_toggle"
+        android:title="@string/account_section_extensions_toggle"
+        android:persistent="false"/>
+
+    <org.chromium.components.browser_ui.settings.ChromeSwitchPreference
         android:key="account_section_reading_list_toggle"
         android:title="@string/account_section_reading_list_toggle"
         android:persistent="false"/>
@@ -66,7 +72,7 @@ found in the LICENSE file.
         android:title="@string/account_section_settings_toggle"
         android:persistent="false"/>
 
-    <org.chromium.components.browser_ui.settings.ChromeBasePreference
+    <org.chromium.components.browser_ui.settings.TextMessagePreference
         android:key="account_section_footer"
         android:summary="@string/account_section_footer"
         android:selectable="false"/>

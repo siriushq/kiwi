@@ -69,10 +69,10 @@ class NET_EXPORT HttpResponseInfo {
   // Initializes from the representation stored in the given pickle.
   bool InitFromPickle(const base::Pickle& pickle, bool* response_truncated);
 
-  // Call this method to persist the response info.
-  void Persist(base::Pickle* pickle,
-               bool skip_transient_headers,
-               bool response_truncated) const;
+  // Call this method to persist the response info. Can't fail. Returns a
+  // unique_ptr because base::Pickle doesn't support std::move().
+  std::unique_ptr<base::Pickle> MakePickle(bool skip_transient_headers,
+                                           bool response_truncated) const;
 
   // Whether QUIC is used or not.
   bool DidUseQuic() const;
@@ -204,6 +204,8 @@ class NET_EXPORT HttpResponseInfo {
   std::optional<int64_t> browser_run_id;
 
   // True if the response used a shared dictionary for decoding its body.
+  // This is always false for resources served from cache (where
+  // dictionary-compressed responses are stored uncompressed).
   bool did_use_shared_dictionary = false;
 };
 

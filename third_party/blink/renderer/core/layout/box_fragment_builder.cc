@@ -24,6 +24,64 @@
 
 namespace blink {
 
+void BoxFragmentBuilder::SetInitialTextBoxTrim() {
+  should_text_box_trim_node_start_ = space_.ShouldTextBoxTrimNodeStart();
+  should_text_box_trim_node_end_ = space_.ShouldTextBoxTrimNodeEnd();
+  should_text_box_trim_fragmentainer_start_ =
+      space_.ShouldTextBoxTrimFragmentainerStart();
+  should_text_box_trim_fragmentainer_end_ =
+      space_.ShouldTextBoxTrimFragmentainerEnd();
+
+  // Disable text box trimming if there's intervening border / padding.
+  if (should_text_box_trim_node_start_ &&
+      BorderPadding().block_start != LayoutUnit()) {
+    should_text_box_trim_node_start_ = false;
+  }
+  if (should_text_box_trim_node_end_ &&
+      BorderPadding().block_end != LayoutUnit()) {
+    should_text_box_trim_node_end_ = false;
+  }
+
+  // Initialize `text-box-trim` flags from `ComputedStyle`.
+  const ComputedStyle& style = Style();
+  if (style.TextBoxTrim() == ETextBoxTrim::kNone) {
+    return;
+  }
+
+  if (!space_.IsAnonymous()) {
+    should_text_box_trim_node_start_ |= style.ShouldTextBoxTrimStart();
+    should_text_box_trim_node_end_ |= style.ShouldTextBoxTrimEnd();
+  }
+
+  // Unless box-decoration-break is 'clone', box trimming specified inside a
+  // fragmentation context will not apply at fragmentainer breaks in that
+  // fragmentation context. Additionally, this is always disabled for
+  // pagination, since our implementation is not able to paint outside the page
+  // area.
+  if (!space_.HasBlockFragmentation() || space_.IsPaginated()) {
+    should_text_box_trim_fragmentainer_start_ = false;
+    should_text_box_trim_fragmentainer_end_ = false;
+  } else {
+    // Should only trim block-start at fragmentainer start if this node is
+    // resumed after a break.
+    if (IsBreakInside(PreviousBreakToken())) {
+      should_text_box_trim_fragmentainer_start_ |=
+          should_text_box_trim_node_start_;
+    } else {
+      should_text_box_trim_fragmentainer_start_ = false;
+    }
+
+    should_text_box_trim_fragmentainer_end_ |= should_text_box_trim_node_end_;
+
+    if (!space_.IsAnonymous() &&
+        style.BoxDecorationBreak() != EBoxDecorationBreak::kClone) {
+      should_text_box_trim_fragmentainer_start_ &=
+          !style.ShouldTextBoxTrimStart();
+      should_text_box_trim_fragmentainer_end_ &= !style.ShouldTextBoxTrimEnd();
+    }
+  }
+}
+
 void BoxFragmentBuilder::UpdateBorderPaddingForClonedBoxDecorations() {
   const BlockBreakToken* break_token = PreviousBreakToken();
   if (!IsBreakInside(break_token)) {
@@ -329,40 +387,73 @@ EBreakBetween BoxFragmentBuilder::JoinedBreakBetweenValue(
   return JoinFragmentainerBreakValues(previous_break_after_, break_before);
 }
 
-void BoxFragmentBuilder::MoveChildrenInBlockDirection(LayoutUnit delta) {
+void BoxFragmentBuilder::MoveChildrenInDirection(LayoutUnit offset,
+                                                 bool is_block_direction) {
   DCHECK(is_new_fc_);
-  DCHECK_NE(FragmentBlockSize(), kIndefiniteSize);
+  DCHECK_NE(is_block_direction ? FragmentBlockSize() : FragmentInlineSize(),
+            kIndefiniteSize);
   DCHECK(oof_positioned_descendants_.empty());
 
-  has_moved_children_in_block_direction_ = true;
+  has_moved_children_ = true;
 
-  if (delta == LayoutUnit())
-    return;
+  // Baselines do not apply in the inline direction.
+  if (is_block_direction) {
+    if (first_baseline_) {
+      *first_baseline_ += offset;
+    }
+    if (last_baseline_) {
+      *last_baseline_ += offset;
+    }
+  }
 
-  if (first_baseline_)
-    *first_baseline_ += delta;
-  if (last_baseline_)
-    *last_baseline_ += delta;
+  if (inflow_bounds_) {
+    if (is_block_direction) {
+      inflow_bounds_->offset.block_offset += offset;
+    } else {
+      inflow_bounds_->offset.inline_offset += offset;
+    }
+  }
 
-  if (inflow_bounds_)
-    inflow_bounds_->offset.block_offset += delta;
+  for (auto& child : children_) {
+    if (is_block_direction) {
+      child.offset.block_offset += offset;
+    } else {
+      child.offset.inline_offset += offset;
+    }
+  }
 
-  for (auto& child : children_)
-    child.offset.block_offset += delta;
+  for (auto& child : children_with_size_dependent_propagation_) {
+    if (is_block_direction) {
+      child.offset.block_offset += offset;
+    } else {
+      child.offset.inline_offset += offset;
+    }
+  }
 
-  for (auto& candidate : oof_positioned_candidates_)
-    candidate.static_position.offset.block_offset += delta;
+  for (auto& candidate : oof_positioned_candidates_) {
+    if (is_block_direction) {
+      candidate.static_position.offset.block_offset += offset;
+    } else {
+      candidate.static_position.offset.inline_offset += offset;
+    }
+  }
+
   for (auto& descendant : oof_positioned_fragmentainer_descendants_) {
     // If we have already returned past (above) the containing block of the OOF
     // (but not all the way the outermost fragmentainer), the containing block
     // is affected by this shift that we just decided to make. This shift wasn't
     // known at the time of normal propagation. So shift accordingly now.
-    descendant.containing_block.IncreaseBlockOffset(delta);
-    descendant.fixedpos_containing_block.IncreaseBlockOffset(delta);
+    if (is_block_direction) {
+      descendant.containing_block.IncreaseBlockOffset(offset);
+      descendant.fixedpos_containing_block.IncreaseBlockOffset(offset);
+    } else {
+      descendant.containing_block.IncreaseInlineOffset(offset);
+      descendant.fixedpos_containing_block.IncreaseInlineOffset(offset);
+    }
   }
 
   if (FragmentItemsBuilder* items_builder = ItemsBuilder()) {
-    items_builder->MoveChildrenInBlockDirection(delta);
+    items_builder->MoveChildrenInDirection(offset, is_block_direction);
   }
 }
 
@@ -544,9 +635,14 @@ void BoxFragmentBuilder::PropagateChildBreakValues(
 }
 
 void BoxFragmentBuilder::HandleOofsAndSpecialDescendants() {
+  has_final_size_ = true;
+
+  // There may be OOFs with anchor queries. So be sure to propagate any anchors
+  // that we've found so far.
+  PropagateSizeDependentData();
+
   OutOfFlowLayoutPart(this).Run();
-  if (Style().ScrollMarkerGroup() != EScrollMarkerGroup::kNone &&
-      !GetConstraintSpace().IsAnonymous()) {
+  if (!Style().ScrollMarkerGroupNone() && !GetConstraintSpace().IsAnonymous()) {
     Node().HandleScrollMarkerGroup();
   }
 }
@@ -564,6 +660,8 @@ const LayoutResult* BoxFragmentBuilder::ToBoxFragment(
     }
   }
 #endif
+
+  Finalize();
 
   if (box_type_ == PhysicalFragment::kNormalBox && node_ &&
       node_.IsBlockInInline()) [[unlikely]] {

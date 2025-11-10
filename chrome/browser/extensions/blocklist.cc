@@ -28,7 +28,10 @@
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "extensions/browser/extension_prefs.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension_id.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 using content::BrowserThread;
 using safe_browsing::SafeBrowsingDatabaseManager;
@@ -108,7 +111,7 @@ class SafeBrowsingClientImpl
             base::SingleThreadTaskRunner::GetCurrentDefault()),
         callback_(std::move(callback)) {}
 
-  ~SafeBrowsingClientImpl() override {}
+  ~SafeBrowsingClientImpl() override = default;
 
   // Pass |database_manager| as a parameter to avoid touching
   // SafeBrowsingService on the IO thread.
@@ -180,7 +183,7 @@ Blocklist::Blocklist() {
   ObserveNewDatabase();
 }
 
-Blocklist::~Blocklist() {}
+Blocklist::~Blocklist() = default;
 
 // static
 Blocklist* Blocklist::Get(content::BrowserContext* context) {

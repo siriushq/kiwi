@@ -7,6 +7,7 @@
 
 #include "base/gtest_prod_util.h"
 #include "base/task/single_thread_task_runner.h"
+#include "cc/input/scroll_snap_data.h"
 #include "third_party/blink/public/mojom/scroll/scroll_into_view_params.mojom-blink-forward.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/scroll/scrollable_area.h"
@@ -59,8 +60,10 @@ class CORE_EXPORT RootFrameViewport final
   bool IsRootFrameViewport() const override { return true; }
   bool SetScrollOffset(const ScrollOffset&,
                        mojom::blink::ScrollType,
+                       cc::ScrollSourceType,
                        mojom::blink::ScrollBehavior,
-                       ScrollCallback on_finish) override;
+                       ScrollCallback on_finish,
+                       bool targeted_scroll = false) override;
   PhysicalRect ScrollIntoView(
       const PhysicalRect&,
       const PhysicalBoxStrut& scroll_margin,
@@ -80,7 +83,8 @@ class CORE_EXPORT RootFrameViewport final
   bool IsScrollCornerVisible() const override;
   gfx::Rect ScrollCornerRect() const override;
   void UpdateScrollOffset(const ScrollOffset&,
-                          mojom::blink::ScrollType) override;
+                          mojom::blink::ScrollType,
+                          cc::ScrollSourceType) override;
   gfx::PointF ScrollOffsetToPosition(const ScrollOffset& offset) const override;
   ScrollOffset ScrollPositionToOffset(
       const gfx::PointF& position) const override;
@@ -105,13 +109,13 @@ class CORE_EXPORT RootFrameViewport final
                                  kIgnoreOverlayScrollbarSize) const override;
   ScrollResult UserScroll(ui::ScrollGranularity,
                           const ScrollOffset&,
+                          cc::ScrollSourceType,
                           ScrollableArea::ScrollCallback on_finish) override;
   CompositorElementId GetScrollElementId() const override;
   CompositorElementId GetScrollbarElementId(
       ScrollbarOrientation orientation) override;
   bool ScrollAnimatorEnabled() const override;
   ChromeClient* GetChromeClient() const override;
-  SmoothScrollSequencer* GetSmoothScrollSequencer() const override;
   void ServiceScrollAnimations(double) override;
   void UpdateCompositorScrollAnimations() override;
   void CancelProgrammaticScrollAnimation() override;
@@ -132,6 +136,8 @@ class CORE_EXPORT RootFrameViewport final
   bool SetTargetSnapAreaElementIds(cc::TargetSnapAreaElementIds) override;
   bool SnapContainerDataNeedsUpdate() const override;
   void SetSnapContainerDataNeedsUpdate(bool) override;
+  std::optional<cc::SnapPositionData> GetSnapPosition(
+      const cc::SnapSelectionStrategy& strategy) const override;
   std::optional<gfx::PointF> GetSnapPositionAndSetTarget(
       const cc::SnapSelectionStrategy& strategy) override;
   void UpdateSnappedTargetsAndEnqueueScrollSnapChange() override;
@@ -187,6 +193,7 @@ class CORE_EXPORT RootFrameViewport final
   bool DistributeScrollBetweenViewports(
       const ScrollOffset&,
       mojom::blink::ScrollType,
+      cc::ScrollSourceType,
       mojom::blink::ScrollBehavior,
       ViewportToScrollFirst,
       ScrollCallback on_finish = ScrollCallback());

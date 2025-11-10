@@ -61,8 +61,6 @@
 #include "third_party/blink/renderer/core/inspector/inspector_trace_events.h"
 #include "third_party/blink/renderer/core/keywords.h"
 #include "third_party/blink/renderer/core/layout/layout_shift_tracker.h"
-#include "third_party/blink/renderer/core/page/page.h"
-#include "third_party/blink/renderer/core/page/spatial_navigation_controller.h"
 #include "third_party/blink/renderer/core/timing/event_timing.h"
 #include "third_party/blink/renderer/core/timing/soft_navigation_heuristics.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
@@ -102,9 +100,9 @@ void EventDispatcher::DispatchSimulatedClick(
   // before dispatchSimulatedClick() returns. This vector is here just to
   // prevent the code from running into an infinite recursion of
   // dispatchSimulatedClick().
-  DEFINE_STATIC_LOCAL(Persistent<HeapHashSet<Member<Node>>>,
+  DEFINE_STATIC_LOCAL(Persistent<GCedHeapHashSet<Member<Node>>>,
                       nodes_dispatching_simulated_clicks,
-                      (MakeGarbageCollected<HeapHashSet<Member<Node>>>()));
+                      (MakeGarbageCollected<GCedHeapHashSet<Member<Node>>>()));
 
   if (IsDisabledFormControl(&node))
     return;
@@ -193,7 +191,7 @@ DispatchEventResult EventDispatcher::Dispatch() {
     // path.
     return DispatchEventResult::kNotCanceled;
   }
-  std::unique_ptr<EventTiming> eventTiming;
+  std::optional<EventTiming> eventTiming;
   auto& document = node_->GetDocument();
   LocalFrame* frame = document.GetFrame();
   LocalDOMWindow* window = nullptr;
@@ -202,7 +200,7 @@ DispatchEventResult EventDispatcher::Dispatch() {
   }
 
   if (frame && window) {
-    eventTiming = EventTiming::Create(window, *event_, event_->target());
+    eventTiming = EventTiming::TryCreate(window, *event_, event_->RawTarget());
   }
 
   if (event_->type() == event_type_names::kChange && event_->isTrusted() &&
@@ -216,9 +214,9 @@ DispatchEventResult EventDispatcher::Dispatch() {
 
   std::optional<SoftNavigationHeuristics::EventScope> soft_navigation_scope;
   if (window) {
-    if (auto* heuristics = SoftNavigationHeuristics::From(*window)) {
+    if (auto* heuristics = window->GetSoftNavigationHeuristics()) {
       soft_navigation_scope =
-          heuristics->MaybeCreateEventScopeForEvent(*event_);
+          heuristics->MaybeCreateEventScopeForInputEvent(*event_);
     }
   }
 
@@ -260,7 +258,7 @@ DispatchEventResult EventDispatcher::Dispatch() {
 #if DCHECK_IS_ON()
   DCHECK(!EventDispatchForbiddenScope::IsEventDispatchForbidden());
 #endif
-  DCHECK(event_->target());
+  DCHECK(event_->RawTarget());
   DEVTOOLS_TIMELINE_TRACE_EVENT("EventDispatch",
                                 inspector_event_dispatch_event::Data, *event_,
                                 document.GetAgent().isolate());
@@ -375,7 +373,7 @@ inline void EventDispatcher::DispatchEventPostProcess(
     // Fire an accessibility event indicating a node was clicked on.  This is
     // safe if event_->target()->ToNode() returns null.
     if (AXObjectCache* cache = node_->GetDocument().ExistingAXObjectCache())
-      cache->HandleClicked(event_->target()->ToNode());
+      cache->HandleClicked(event_->RawTarget()->ToNode());
 
     // Pass the data from the PreDispatchEventHandler to the
     // PostDispatchEventHandler.
@@ -434,14 +432,8 @@ inline void EventDispatcher::DispatchEventPostProcess(
 #endif  // BUILDFLAG(IS_MAC)
   }
 
-  auto* keyboard_event = DynamicTo<KeyboardEvent>(event_);
-  if (Page* page = node_->GetDocument().GetPage()) {
-    if (page->GetSettings().GetSpatialNavigationEnabled() &&
-        is_trusted_or_click && keyboard_event &&
-        keyboard_event->key() == keywords::kCapitalEnter &&
-        event_->type() == event_type_names::kKeyup) {
-      page->GetSpatialNavigationController().ResetEnterKeyState();
-    }
+  if (event_->IsMouseEvent() && event_->type() == event_type_names::kMouseup) {
+    node_->GetDocument().SetCustomizableSelectMousedownLocation(std::nullopt);
   }
 
   // Track the usage of sending a mousedown event to a select element to force
@@ -456,8 +448,9 @@ inline void EventDispatcher::DispatchEventPostProcess(
   // 16. If target's root is a shadow root, then set event's target attribute
   // and event's relatedTarget to null.
   event_->SetTarget(event_->GetEventPath().GetWindowEventContext().Target());
-  if (!event_->target())
+  if (!event_->RawTarget()) {
     event_->SetRelatedTargetIfExists(nullptr);
+  }
 }
 
 }  // namespace blink

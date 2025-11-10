@@ -10,7 +10,7 @@
 @namespace "http://www.w3.org/1999/xhtml";
 
 html::view-transition {
-  position: fixed;
+  position: absolute;
   inset: 0;
 }
 
@@ -20,9 +20,15 @@ html::view-transition-group(*) {
   left: 0;
 }
 
-::view-transition-image-pair(*) {
+::view-transition-image-pair(*),
+::view-transition-group-children(*) {
   position: absolute;
   inset: 0;
+}
+
+::view-transition-group-children(*) {
+  border-style: solid;
+  border-color: transparent;
 }
 
 ::view-transition-new(*),

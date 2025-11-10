@@ -7,12 +7,15 @@
 #include "base/memory/singleton.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/file_util.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/extensions/extension_assets_manager_chromeos.h"
 #endif
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 namespace {
@@ -52,8 +55,8 @@ class ExtensionAssetsManagerImpl :  public ExtensionAssetsManager {
  private:
   friend struct base::DefaultSingletonTraits<ExtensionAssetsManagerImpl>;
 
-  ExtensionAssetsManagerImpl() {}
-  ~ExtensionAssetsManagerImpl() override {}
+  ExtensionAssetsManagerImpl() = default;
+  ~ExtensionAssetsManagerImpl() override = default;
 };
 
 }  // namespace

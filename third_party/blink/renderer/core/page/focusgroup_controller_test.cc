@@ -52,6 +52,34 @@ class FocusgroupControllerTest : public PageTestBase {
   ScopedFocusgroupForTest focusgroup_enabled{true};
 };
 
+TEST_F(FocusgroupControllerTest,
+       GridNavigationDisabledWithoutFocusgroupGridFlag) {
+  // Explicitly disable FocusgroupGrid. Ensure arrow keys don't traverse a
+  // grid when the feature is disabled.
+  ScopedFocusgroupGridForTest grid_enabled{false};
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
+    <table id=table focusgroup=grid>
+      <tr>
+        <td id=c1 tabindex=0>1</td>
+        <td id=c2 tabindex=-1>2</td>
+      </tr>
+    </table>
+  )HTML");
+  UpdateAllLifecyclePhasesForTest();
+
+  auto* c1 = GetElementById("c1");
+  auto* c2 = GetElementById("c2");
+  ASSERT_TRUE(c1);
+  ASSERT_TRUE(c2);
+  c1->Focus();
+  ASSERT_EQ(GetDocument().FocusedElement(), c1);
+
+  // Send right arrow; with grid flag disabled, focus shouldn't move.
+  auto* event = KeyDownEvent(ui::DomKey::ARROW_RIGHT, c1);
+  SendEvent(event);
+  EXPECT_EQ(GetDocument().FocusedElement(), c1);
+}
+
 TEST_F(FocusgroupControllerTest, FocusgroupDirectionForEventValid) {
   // Arrow right should be forward and inline.
   auto* event = KeyDownEvent(ui::DomKey::ARROW_RIGHT);
@@ -343,7 +371,7 @@ TEST_F(FocusgroupControllerTest, FocusgroupExtendsInAxis) {
 }
 
 TEST_F(FocusgroupControllerTest, FindNearestFocusgroupAncestor) {
-  GetDocument().body()->setHTMLUnsafe(R"HTML(
+  GetDocument().body()->SetHTMLUnsafeWithoutTrustedTypes(R"HTML(
     <div>
       <span id=item1 tabindex=0></span>
     </div>
@@ -462,7 +490,7 @@ TEST_F(FocusgroupControllerTest, FindNearestFocusgroupAncestor) {
 }
 
 TEST_F(FocusgroupControllerTest, NextElement) {
-  GetDocument().body()->setHTMLUnsafe(R"HTML(
+  GetDocument().body()->SetHTMLUnsafeWithoutTrustedTypes(R"HTML(
     <div id=fg1 focusgroup>
       <span id=item1></span>
       <span id=item2 tabindex=-1></span>
@@ -498,7 +526,7 @@ TEST_F(FocusgroupControllerTest, NextElement) {
 }
 
 TEST_F(FocusgroupControllerTest, PreviousElement) {
-  GetDocument().body()->setHTMLUnsafe(R"HTML(
+  GetDocument().body()->SetHTMLUnsafeWithoutTrustedTypes(R"HTML(
     <div id=fg1 focusgroup>
       <span id=item1></span>
       <span id=item2 tabindex=-1></span>
@@ -529,7 +557,7 @@ TEST_F(FocusgroupControllerTest, PreviousElement) {
 }
 
 TEST_F(FocusgroupControllerTest, LastElementWithin) {
-  GetDocument().body()->setHTMLUnsafe(R"HTML(
+  GetDocument().body()->SetHTMLUnsafeWithoutTrustedTypes(R"HTML(
     <div id=fg1 focusgroup>
       <span id=item1></span>
       <span id=item2 tabindex=-1></span>
@@ -558,7 +586,7 @@ TEST_F(FocusgroupControllerTest, LastElementWithin) {
 }
 
 TEST_F(FocusgroupControllerTest, IsFocusgroupItem) {
-  GetDocument().body()->setInnerHTML(R"HTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <div id=fg1 focusgroup>
       <span id=item1 tabindex=0></span>
       <span id=item2></span>
@@ -596,7 +624,7 @@ TEST_F(FocusgroupControllerTest, IsFocusgroupItem) {
 }
 
 TEST_F(FocusgroupControllerTest, CellAtIndexInRowBehaviorOnNoCellFound) {
-  GetDocument().body()->setInnerHTML(R"HTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <table id=table focusgroup=grid>
       <tr>
         <td id=r1c1></td>
@@ -658,7 +686,7 @@ TEST_F(FocusgroupControllerTest, CellAtIndexInRowBehaviorOnNoCellFound) {
 }
 
 TEST_F(FocusgroupControllerTest, DontMoveFocusWhenNoFocusedElement) {
-  GetDocument().body()->setInnerHTML(R"HTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <div focusgroup>
       <span id=item1 tabindex=0></span>
       <span id=item2 tabindex=0></span>
@@ -676,7 +704,7 @@ TEST_F(FocusgroupControllerTest, DontMoveFocusWhenNoFocusedElement) {
 }
 
 TEST_F(FocusgroupControllerTest, DontMoveFocusWhenModifierKeyIsSet) {
-  GetDocument().body()->setInnerHTML(R"HTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <div focusgroup>
       <span id=item1 tabindex=0></span>
       <span id=item2 tabindex=0></span>
@@ -698,7 +726,7 @@ TEST_F(FocusgroupControllerTest, DontMoveFocusWhenModifierKeyIsSet) {
 }
 
 TEST_F(FocusgroupControllerTest, DontMoveFocusWhenItAlreadyMoved) {
-  GetDocument().body()->setInnerHTML(R"HTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <div focusgroup>
       <span id=item1 tabindex=0></span>
       <span id=item2 tabindex=0></span>

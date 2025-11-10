@@ -43,13 +43,16 @@ class StyleResolverState;
 class CORE_EXPORT CachedMatchedProperties final
     : public GarbageCollected<CachedMatchedProperties> {
  public:
-  // Caches data of MatchedProperties. See |MatchedPropertiesCache::Cache| for
-  // semantics.
+  // Caches the result of applying a set of MatchedProperties in order
+  // See |MatchedPropertiesCache::Cache| for semantics.
   // We use UntracedMember<> here because WeakMember<> would require using a
   // HeapHashSet which is slower to iterate.
-  Vector<
-      std::pair<UntracedMember<CSSPropertyValueSet>, MatchedProperties::Data>>
-      matched_properties;
+  struct Key {
+    UntracedMember<CSSPropertyValueSet> properties;
+    UntracedMember<const CustomEnvBindings> env_bindings;
+    MatchedProperties::Data data;
+  };
+  Vector<Key> matched_properties;
 
   struct Entry {
     DISALLOW_NEW();
@@ -143,7 +146,9 @@ class CORE_EXPORT MatchedPropertiesCache {
   // well with complex keys. Of course, it means we are vulnerable to hash
   // collisions, in that we cannot store more than one different cache entry
   // with the same hash.
-  using Cache = HeapHashMap<unsigned, Member<CachedMatchedProperties>>;
+  using Cache = HeapHashMap<unsigned,
+                            Member<CachedMatchedProperties>,
+                            AlreadyHashedTraits>;
 
   void CleanMatchedPropertiesCache(const LivenessBroker&);
 
@@ -164,18 +169,14 @@ class CORE_EXPORT MatchedPropertiesCache {
 // For debugging only.
 std::ostream& operator<<(std::ostream&, MatchedPropertiesCache::Key&);
 
-}  // namespace blink
-
-namespace WTF {
-
 template <>
-struct VectorTraits<blink::CachedMatchedProperties::Entry>
-    : VectorTraitsBase<blink::CachedMatchedProperties::Entry> {
+struct VectorTraits<CachedMatchedProperties::Entry>
+    : VectorTraitsBase<CachedMatchedProperties::Entry> {
   static constexpr bool kCanClearUnusedSlotsWithMemset = true;
   // HeapVector is evidently not concurrent.
   static constexpr bool kCanTraceConcurrently = false;
 };
 
-}  // namespace WTF
+}  // namespace blink
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_CORE_CSS_RESOLVER_MATCHED_PROPERTIES_CACHE_H_

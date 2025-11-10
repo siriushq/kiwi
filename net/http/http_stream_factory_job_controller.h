@@ -14,6 +14,8 @@
 #include "base/time/time.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/net_errors.h"
+#include "net/http/alternate_protocol_usage.h"
+#include "net/http/alternative_service.h"
 #include "net/http/http_stream_factory_job.h"
 #include "net/http/http_stream_request.h"
 #include "net/spdy/spdy_session_pool.h"
@@ -42,7 +44,7 @@ class HttpStreamFactory::JobController
                 const HttpRequestInfo& http_request_info,
                 bool is_preconnect,
                 bool is_websocket,
-                bool enable_ip_based_pooling,
+                bool enable_ip_based_pooling_for_h2,
                 bool enable_alternative_services,
                 bool delay_main_job_with_available_spdy_session,
                 const std::vector<SSLConfig::CertAndStatus>& allowed_bad_certs);
@@ -53,14 +55,6 @@ class HttpStreamFactory::JobController
   const Job* main_job() const { return main_job_.get(); }
   const Job* alternative_job() const { return alternative_job_.get(); }
   const Job* dns_alpn_h3_job() const { return dns_alpn_h3_job_.get(); }
-
-  // Modifies `url` in-place, applying any applicable HostMappingRules of
-  // `session_` to it.
-  void RewriteUrlWithHostMappingRules(GURL& url) const;
-
-  // Same as RewriteUrlWithHostMappingRules(), but duplicates `url` instead of
-  // modifying it.
-  GURL DuplicateUrlWithHostMappingRules(const GURL& url) const;
 
   // Methods below are called by HttpStreamFactory only.
   // Creates request and hands out to HttpStreamFactory, this will also create
@@ -180,6 +174,12 @@ class HttpStreamFactory::JobController
     STATE_NONE
   };
 
+  // Represents an alternative service and its state.
+  struct AdvertisedAlternativeService {
+    AlternativeServiceInfo info;
+    AdvertisedAltSvcState state = AdvertisedAltSvcState::kUnknown;
+  };
+
   void OnIOComplete(int result);
 
   void RunLoop(int result);
@@ -244,14 +244,12 @@ class HttpStreamFactory::JobController
   //   |dns_alpn_h3_job_failed_on_default_network_| to false.
   void ResetErrorStatusForJobs();
 
-  AlternativeServiceInfo GetAlternativeServiceInfoFor(
-      const GURL& http_request_info_url,
+  AdvertisedAlternativeService GetAdvertisedAltSvcFor(
       const StreamRequestInfo& request_info,
       HttpStreamRequest::Delegate* delegate,
       HttpStreamRequest::StreamType stream_type);
 
-  AlternativeServiceInfo GetAlternativeServiceInfoInternal(
-      const GURL& http_request_info_url,
+  AdvertisedAlternativeService GetAdvertisedAltSvcInternal(
       const StreamRequestInfo& request_info,
       HttpStreamRequest::Delegate* delegate,
       HttpStreamRequest::StreamType stream_type);
@@ -301,10 +299,7 @@ class HttpStreamFactory::JobController
   // the preconnect completed. Used to notify the factory of completion.
   void OnPoolPreconnectsComplete(int rv);
 
-  // Used to call HttpStreamRequest::OnSwitchesToHttpStreamPool() later.
-  void CallOnSwitchesToHttpStreamPool(
-      HttpStreamKey stream_key,
-      AlternativeServiceInfo alternative_service_info);
+  bool disable_cert_verification_network_fetches() const;
 
   const raw_ptr<HttpStreamFactory> factory_;
   const raw_ptr<HttpNetworkSession> session_;
@@ -326,7 +321,8 @@ class HttpStreamFactory::JobController
 
   // Enable pooling to a SpdySession with matching IP and certificate even if
   // the SpdySessionKey is different.
-  const bool enable_ip_based_pooling_;
+  // Note that this does nothing with QUIC.
+  const bool enable_ip_based_pooling_for_h2_;
 
   // Enable using alternative services for the request. If false, the
   // JobController will only create a |main_job_|.
@@ -345,9 +341,9 @@ class HttpStreamFactory::JobController
 
   std::unique_ptr<Job> preconnect_backup_job_;
 
-  // The alternative service used by |alternative_job_|
-  // (or by |main_job_| if |is_preconnect_|.)
-  AlternativeServiceInfo alternative_service_info_;
+  // The alternative service and its state used by `alternative_job_`
+  // (or by `main_job_` if `is_preconnect_`.)
+  AdvertisedAlternativeService advertised_alt_svc_;
 
   // Error status used for alternative service brokenness reporting.
   // Net error code of the main job. Set to OK by default.
@@ -388,16 +384,11 @@ class HttpStreamFactory::JobController
   // It will be nulled when the |request_| is finished.
   raw_ptr<Job> bound_job_ = nullptr;
 
+  // Keeps track of the connection keepalive info.
+  std::optional<ConnectionManagementConfig> management_config_;
+
   State next_state_ = STATE_RESOLVE_PROXY;
   std::unique_ptr<ProxyResolutionRequest> proxy_resolve_request_;
-  // The URL from the input `http_request_info`.
-  // TODO(https://crbug.com/332724851): Remove this, and update code to use
-  // `origin_url_`.
-  const GURL http_request_info_url_;
-  // The same as `request_info_url_`, but with any applicable rules in
-  // HostMappingRules applied to it.
-  // TODO: Make this use SchemeHostPort instead, and rename it.
-  const GURL origin_url_;
   const StreamRequestInfo request_info_;
   ProxyInfo proxy_info_;
   const std::vector<SSLConfig::CertAndStatus> allowed_bad_certs_;

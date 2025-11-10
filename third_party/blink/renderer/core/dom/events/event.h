@@ -43,6 +43,7 @@ class EventInit;
 class EventPath;
 class EventTarget;
 class Node;
+class Element;
 class ScriptState;
 
 class CORE_EXPORT Event : public ScriptWrappable {
@@ -142,12 +143,23 @@ class CORE_EXPORT Event : public ScriptWrappable {
   const AtomicString& type() const { return type_; }
   void SetType(const AtomicString& type) { type_ = type; }
 
-  EventTarget* target() const { return target_.Get(); }
+  // Web exposed target of the event. Can't be a pseudo-element.
+  EventTarget* target() const;
   void SetTarget(EventTarget*);
+
+  // This is the target that the event was dispatched to, without any
+  // retargeting. Can be a pseudo-element. Shouldn't we web exposed.
+  EventTarget* RawTarget() const { return target_.Get(); }
 
   EventTarget* currentTarget() const;
   void SetCurrentTarget(EventTarget* current_target) {
     current_target_ = current_target;
+  }
+  void SetInvocationTargetInShadowTree(bool is_in_shadow_tree) {
+    invocation_target_in_shadow_tree_ = is_in_shadow_tree;
+  }
+  bool invocationTargetInShadowTree() const {
+    return invocation_target_in_shadow_tree_;
   }
 
   // This callback is invoked when an event listener has been dispatched
@@ -235,6 +247,9 @@ class CORE_EXPORT Event : public ScriptWrappable {
   virtual bool IsBeforeCreatePolicyEvent() const;
   virtual bool IsBeforeUnloadEvent() const;
   virtual bool IsErrorEvent() const;
+
+  virtual bool IsPatchEvent() const;
+  virtual bool IsRouteEvent() const;
 
   bool PropagationStopped() const {
     return propagation_stopped_ || immediate_propagation_stopped_;
@@ -330,6 +345,14 @@ class CORE_EXPORT Event : public ScriptWrappable {
 
   PassiveMode HandlingPassive() const { return handling_passive_; }
 
+  // Retargets the provided `element` to prevent it from being leaked when this
+  // event is fired on a node inside a ShadowRoot. If this is called during
+  // event dispatching, where currentTarget() has a value, `element` is
+  // retargeted against currentTarget(). Otherwise, it is retargeted against
+  // target().  target() may be null after event dispatch to prevent leaking,
+  // and in that case, this method will return null as well.
+  Element* Retarget(Element* element) const;
+
  private:
   AtomicString type_;
   bool bubbles_ : 1;
@@ -356,6 +379,8 @@ class CORE_EXPORT Event : public ScriptWrappable {
   bool fire_only_non_capture_listeners_at_target_ : 1;
 
   bool copy_event_path_from_underlying_event_ : 1;
+
+  bool invocation_target_in_shadow_tree_ : 1;
 
   PassiveMode handling_passive_;
   PhaseType event_phase_;

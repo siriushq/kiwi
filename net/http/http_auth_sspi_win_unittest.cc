@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "base/base64.h"
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/json/json_reader.h"
 #include "net/base/net_errors.h"
@@ -56,7 +57,7 @@ TEST(HttpAuthSSPITest, SplitUserAndDomain) {
 
 TEST(HttpAuthSSPITest, DetermineMaxTokenLength_Normal) {
   SecPkgInfoW package_info;
-  memset(&package_info, 0x0, sizeof(package_info));
+  UNSAFE_TODO(memset(&package_info, 0x0, sizeof(package_info)));
   package_info.cbMaxToken = 1337;
 
   MockSSPILibrary mock_library{L"NTLM"};
@@ -230,7 +231,8 @@ TEST(HttpAuthSSPITest, GenerateAuthToken_FullHandshake_AmbientCreds_Logging) {
         "security_status": 0
        }
     }
-  )");
+  )",
+                                         base::JSON_PARSE_CHROMIUM_EXTENSIONS);
   EXPECT_EQ(expected, entries[1].params);
 
   entries = net_log_observer.GetEntriesWithType(
@@ -246,7 +248,8 @@ TEST(HttpAuthSSPITest, GenerateAuthToken_FullHandshake_AmbientCreds_Logging) {
        },
        "spn": "HTTP/intranet.google.com"
     }
-  )");
+  )",
+                                    base::JSON_PARSE_CHROMIUM_EXTENSIONS);
   EXPECT_EQ(expected, entries[0].params);
 
   expected = base::JSONReader::Read(R"(
@@ -268,7 +271,8 @@ TEST(HttpAuthSSPITest, GenerateAuthToken_FullHandshake_AmbientCreds_Logging) {
          "security_status": 0
       }
     }
-  )");
+  )",
+                                    base::JSON_PARSE_CHROMIUM_EXTENSIONS);
   EXPECT_EQ(expected, entries[1].params);
 
   expected = base::JSONReader::Read(R"(
@@ -290,7 +294,8 @@ TEST(HttpAuthSSPITest, GenerateAuthToken_FullHandshake_AmbientCreds_Logging) {
          "security_status": 0
       }
     }
-  )");
+  )",
+                                    base::JSON_PARSE_CHROMIUM_EXTENSIONS);
   EXPECT_EQ(expected, entries[3].params);
 }
 }  // namespace net

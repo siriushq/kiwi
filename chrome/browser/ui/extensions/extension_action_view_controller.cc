@@ -14,6 +14,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/extensions/api/side_panel/side_panel_service.h"
 #include "chrome/browser/extensions/commands/command_service.h"
@@ -25,12 +26,14 @@
 #include "chrome/browser/extensions/permissions/site_permissions_helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/extensions/extension_action_platform_delegate.h"
 #include "chrome/browser/ui/extensions/extension_popup_types.h"
 #include "chrome/browser/ui/extensions/extension_side_panel_utils.h"
 #include "chrome/browser/ui/extensions/extensions_container.h"
 #include "chrome/browser/ui/extensions/icon_with_badge_image_source.h"
 #include "chrome/browser/ui/toolbar/toolbar_action_view_delegate.h"
+#include "chrome/browser/ui/toolbar/toolbar_actions_model.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/sessions/content/session_tab_helper.h"
 #include "content/public/browser/web_contents.h"
@@ -45,6 +48,7 @@
 #include "ui/base/models/image_model.h"
 #include "ui/color/color_provider_manager.h"
 #include "ui/gfx/image/image_skia.h"
+#include "ui/gfx/native_ui_types.h"
 #include "ui/native_theme/native_theme.h"
 
 using extensions::ActionInfo;
@@ -106,20 +110,22 @@ GetHoverCardSiteAccessState(
 // extension pinned by admin is also installed by admin. Thus, "pinned by admin"
 // has preference.
 ExtensionActionViewController::HoverCardState::AdminPolicy
-GetHoverCardPolicyState(Browser* browser,
+GetHoverCardPolicyState(Profile& profile,
                         const extensions::ExtensionId& extension_id) {
-  auto* const model = ToolbarActionsModel::Get(browser->profile());
-  if (model->IsActionForcePinned(extension_id))
+  auto* const model = ToolbarActionsModel::Get(&profile);
+  if (model->IsActionForcePinned(extension_id)) {
     return ExtensionActionViewController::HoverCardState::AdminPolicy::
         kPinnedByAdmin;
+  }
 
   scoped_refptr<const extensions::Extension> extension =
-      extensions::ExtensionRegistry::Get(browser->profile())
+      extensions::ExtensionRegistry::Get(&profile)
           ->enabled_extensions()
           .GetByID(extension_id);
-  if (extensions::Manifest::IsPolicyLocation(extension->location()))
+  if (extensions::Manifest::IsPolicyLocation(extension->location())) {
     return ExtensionActionViewController::HoverCardState::AdminPolicy::
         kInstalledByAdmin;
+  }
 
   return ExtensionActionViewController::HoverCardState::AdminPolicy::kNone;
 }
@@ -130,18 +136,19 @@ GetHoverCardPolicyState(Browser* browser,
 std::unique_ptr<ExtensionActionViewController>
 ExtensionActionViewController::Create(
     const extensions::ExtensionId& extension_id,
-    Browser* browser,
+    BrowserWindowInterface* browser,
     ExtensionsContainer* extensions_container) {
   DCHECK(browser);
   DCHECK(extensions_container);
 
-  auto* registry = extensions::ExtensionRegistry::Get(browser->profile());
+  Profile* profile = browser->GetProfile();
+  auto* registry = extensions::ExtensionRegistry::Get(profile);
   scoped_refptr<const extensions::Extension> extension =
       registry->enabled_extensions().GetByID(extension_id);
   DCHECK(extension);
   extensions::ExtensionAction* extension_action =
-      extensions::ExtensionActionManager::Get(browser->profile())
-          ->GetExtensionAction(*extension);
+      extensions::ExtensionActionManager::Get(profile)->GetExtensionAction(
+          *extension);
   DCHECK(extension_action);
 
   // WrapUnique() because the constructor is private.
@@ -165,19 +172,23 @@ bool ExtensionActionViewController::AnyActionHasCurrentSiteAccess(
 
 ExtensionActionViewController::ExtensionActionViewController(
     scoped_refptr<const extensions::Extension> extension,
-    Browser* browser,
+    BrowserWindowInterface* browser,
     extensions::ExtensionAction* extension_action,
     extensions::ExtensionRegistry* extension_registry,
     ExtensionsContainer* extensions_container)
     : extension_(std::move(extension)),
       browser_(browser),
+      profile_(browser->GetProfile()),
       extension_action_(extension_action),
       extensions_container_(extensions_container),
       popup_host_(nullptr),
       view_delegate_(nullptr),
       platform_delegate_(ExtensionActionPlatformDelegate::Create(this)),
       icon_factory_(extension_.get(), extension_action, this),
-      extension_registry_(extension_registry) {}
+      extension_registry_(extension_registry) {
+  command_service_observation_.Observe(
+      extensions::CommandService::Get(profile_));
+}
 
 ExtensionActionViewController::~ExtensionActionViewController() {
   DCHECK(!IsShowingPopup());
@@ -202,16 +213,18 @@ void ExtensionActionViewController::SetDelegate(
 ui::ImageModel ExtensionActionViewController::GetIcon(
     content::WebContents* web_contents,
     const gfx::Size& size) {
-  if (!ExtensionIsValid())
+  if (!ExtensionIsValid()) {
     return ui::ImageModel();
+  }
 
   return ui::ImageModel::FromImageSkia(
       gfx::ImageSkia(GetIconImageSource(web_contents, size), size));
 }
 
 std::u16string ExtensionActionViewController::GetActionName() const {
-  if (!ExtensionIsValid())
+  if (!ExtensionIsValid()) {
     return std::u16string();
+  }
 
   return base::UTF8ToUTF16(extension_->name());
 }
@@ -229,13 +242,15 @@ std::u16string ExtensionActionViewController::GetActionTitle(
 
 std::u16string ExtensionActionViewController::GetAccessibleName(
     content::WebContents* web_contents) const {
-  if (!ExtensionIsValid())
+  if (!ExtensionIsValid()) {
     return std::u16string();
+  }
 
   // GetAccessibleName() can (surprisingly) be called during browser
   // teardown. Handle this gracefully.
-  if (!web_contents)
+  if (!web_contents) {
     return base::UTF8ToUTF16(extension()->name());
+  }
 
   std::u16string action_title = GetActionTitle(web_contents);
   std::u16string accessible_name =
@@ -277,8 +292,7 @@ std::u16string ExtensionActionViewController::GetTooltip(
 
     url::Origin origin =
         web_contents->GetPrimaryMainFrame()->GetLastCommittedOrigin();
-    auto* permissions_manager =
-        extensions::PermissionsManager::Get(browser_->profile());
+    auto* permissions_manager = extensions::PermissionsManager::Get(profile_);
     ToolbarActionViewController::HoverCardState::SiteAccess site_access =
         GetHoverCardSiteAccessState(
             permissions_manager->GetUserSiteSetting(origin),
@@ -334,7 +348,7 @@ bool ExtensionActionViewController::IsEnabled(
   }
 
   extensions::SidePanelService* side_panel_service =
-      extensions::SidePanelService::Get(browser_->profile());
+      extensions::SidePanelService::Get(profile_);
   return side_panel_service &&
          side_panel_service->HasSidePanelActionForTab(*extension(), tab_id);
 }
@@ -347,29 +361,31 @@ void ExtensionActionViewController::HidePopup() {
   if (IsShowingPopup()) {
     // Only call Close() on the popup if it's been shown; otherwise, the popup
     // will be cleaned up in ShowPopup().
-    if (has_opened_popup_)
+    if (has_opened_popup_) {
       popup_host_->Close();
+    }
     // We need to do these actions synchronously (instead of closing and then
     // performing the rest of the cleanup in OnExtensionHostDestroyed()) because
     // the extension host may close asynchronously, and we need to keep the view
     // delegate up to date.
-    if (popup_host_)
+    if (popup_host_) {
       OnPopupClosed();
+    }
   }
 }
 
 gfx::NativeView ExtensionActionViewController::GetPopupNativeView() {
-  return popup_host_ ? popup_host_->view()->GetNativeView() : nullptr;
+  return popup_host_ ? popup_host_->view()->GetNativeView() : gfx::NativeView();
 }
 
 ui::MenuModel* ExtensionActionViewController::GetContextMenu(
     extensions::ExtensionContextMenuModel::ContextMenuSource
         context_menu_source) {
-  if (!ExtensionIsValid())
+  if (!ExtensionIsValid()) {
     return nullptr;
+  }
 
-  bool is_pinned =
-      ToolbarActionsModel::Get(browser_->profile())->IsActionPinned(GetId());
+  bool is_pinned = ToolbarActionsModel::Get(profile_)->IsActionPinned(GetId());
 
   // Reconstruct the menu every time because the menu's contents are dynamic.
   context_menu_model_ = std::make_unique<extensions::ExtensionContextMenuModel>(
@@ -396,8 +412,9 @@ void ExtensionActionViewController::OnContextMenuClosed(
 }
 
 void ExtensionActionViewController::ExecuteUserAction(InvocationSource source) {
-  if (!ExtensionIsValid())
+  if (!ExtensionIsValid()) {
     return;
+  }
 
   if (!IsEnabled(view_delegate_->GetCurrentWebContents())) {
     GetPreferredPopupViewController()
@@ -409,8 +426,9 @@ void ExtensionActionViewController::ExecuteUserAction(InvocationSource source) {
       view_delegate_->GetCurrentWebContents();
   ExtensionActionRunner* action_runner =
       ExtensionActionRunner::GetForWebContents(web_contents);
-  if (!action_runner)
+  if (!action_runner) {
     return;
+  }
 
   RecordInvocationSource(source);
 
@@ -443,8 +461,9 @@ void ExtensionActionViewController::TriggerPopupForAPI(
 }
 
 void ExtensionActionViewController::UpdateState() {
-  if (!ExtensionIsValid())
+  if (!ExtensionIsValid()) {
     return;
+  }
 
   view_delegate_->UpdateState();
 }
@@ -452,21 +471,61 @@ void ExtensionActionViewController::UpdateState() {
 void ExtensionActionViewController::UpdateHoverCard(
     ToolbarActionView* action_view,
     ToolbarActionHoverCardUpdateType update_type) {
-  if (!ExtensionIsValid())
+  if (!ExtensionIsValid()) {
     return;
+  }
 
   extensions_container_->UpdateToolbarActionHoverCard(action_view, update_type);
 }
 
 void ExtensionActionViewController::RegisterCommand() {
-  if (!ExtensionIsValid())
+  if (!ExtensionIsValid()) {
     return;
+  }
 
   platform_delegate_->RegisterCommand();
 }
 
 void ExtensionActionViewController::UnregisterCommand() {
   platform_delegate_->UnregisterCommand();
+}
+
+void ExtensionActionViewController::OnExtensionCommandAdded(
+    const std::string& extension_id,
+    const extensions::Command& command) {
+  if (extension_id != extension()->id()) {
+    return;  // Not this action's extension.
+  }
+
+  if (!extensions::Command::IsActionRelatedCommand(command.command_name())) {
+    return;
+  }
+
+  RegisterCommand();
+}
+
+void ExtensionActionViewController::OnExtensionCommandRemoved(
+    const std::string& extension_id,
+    const extensions::Command& command) {
+  if (extension_id != extension()->id()) {
+    return;
+  }
+
+  if (!extensions::Command::IsActionRelatedCommand(command.command_name())) {
+    return;
+  }
+
+  extensions::Command extension_command;
+  if (GetExtensionCommand(&extension_command)) {
+    return;  // Command has not been removed.
+  }
+
+  UnregisterCommand();
+}
+
+void ExtensionActionViewController::OnCommandServiceDestroying() {
+  DCHECK(command_service_observation_.IsObserving());
+  command_service_observation_.Reset();
 }
 
 void ExtensionActionViewController::InspectPopup() {
@@ -479,8 +538,9 @@ void ExtensionActionViewController::InspectPopup() {
 void ExtensionActionViewController::OnIconUpdated() {
   // We update the view first, so that if the observer relies on its UI it can
   // be ready.
-  if (view_delegate_)
+  if (view_delegate_) {
     view_delegate_->UpdateState();
+  }
 }
 
 void ExtensionActionViewController::OnExtensionHostDestroyed(
@@ -491,8 +551,8 @@ void ExtensionActionViewController::OnExtensionHostDestroyed(
 extensions::SitePermissionsHelper::SiteInteraction
 ExtensionActionViewController::GetSiteInteraction(
     content::WebContents* web_contents) const {
-  return extensions::SitePermissionsHelper(browser_->profile())
-      .GetSiteInteraction(*extension(), web_contents);
+  return extensions::SitePermissionsHelper(profile_).GetSiteInteraction(
+      *extension(), web_contents);
 }
 
 bool ExtensionActionViewController::ExtensionIsValid() const {
@@ -502,10 +562,11 @@ bool ExtensionActionViewController::ExtensionIsValid() const {
 bool ExtensionActionViewController::GetExtensionCommand(
     extensions::Command* command) const {
   DCHECK(command);
-  if (!ExtensionIsValid())
+  if (!ExtensionIsValid()) {
     return false;
+  }
 
-  CommandService* command_service = CommandService::Get(browser_->profile());
+  CommandService* command_service = CommandService::Get(profile_);
   return command_service->GetExtensionActionCommand(
       extension_->id(), extension_action_->action_type(),
       CommandService::ACTIVE, command, nullptr);
@@ -520,21 +581,21 @@ ExtensionActionViewController::GetHoverCardState(
   url::Origin origin =
       web_contents->GetPrimaryMainFrame()->GetLastCommittedOrigin();
   extensions::PermissionsManager::UserSiteSetting site_setting =
-      extensions::PermissionsManager::Get(browser_->profile())
-          ->GetUserSiteSetting(origin);
+      extensions::PermissionsManager::Get(profile_)->GetUserSiteSetting(origin);
   auto site_interaction = GetSiteInteraction(web_contents);
 
   HoverCardState state;
   state.site_access =
       GetHoverCardSiteAccessState(site_setting, site_interaction);
-  state.policy = GetHoverCardPolicyState(browser_, GetId());
+  state.policy = GetHoverCardPolicyState(*profile_, GetId());
 
   return state;
 }
 
 bool ExtensionActionViewController::CanHandleAccelerators() const {
-  if (!ExtensionIsValid())
+  if (!ExtensionIsValid()) {
     return false;
+  }
 
 #if DCHECK_IS_ON()
   {
@@ -584,8 +645,8 @@ void ExtensionActionViewController::TriggerPopup(PopupShowAction show_action,
   const GURL popup_url = extension_action_->GetPopupUrl(tab_id);
 
   std::unique_ptr<extensions::ExtensionViewHost> host =
-      extensions::ExtensionViewHostFactory::CreatePopupHost(popup_url,
-                                                            browser_);
+      extensions::ExtensionViewHostFactory::CreatePopupHost(
+          popup_url, browser_->GetBrowserForMigrationOnly());
   // Creating a host should never fail in this case, since the extension is
   // valid and has a valid popup URL.
   CHECK(host);
@@ -614,8 +675,9 @@ void ExtensionActionViewController::ShowPopup(
   // It's possible that the popup should be closed before it finishes opening
   // (since it can open asynchronously). Check before proceeding.
   if (!popup_host_) {
-    if (callback)
+    if (callback) {
       std::move(callback).Run(nullptr);
+    }
     return;
   }
   // NOTE: Today, ShowPopup() always synchronously creates the platform-specific
@@ -677,23 +739,23 @@ ExtensionActionViewController::GetIconImageSource(
   bool action_is_visible = extension_action_->GetIsVisible(tab_id);
 
   extensions::SidePanelService* side_panel_service =
-      extensions::SidePanelService::Get(browser_->profile());
+      extensions::SidePanelService::Get(profile_);
   bool has_side_panel_action =
       side_panel_service &&
       side_panel_service->HasSidePanelActionForTab(*extension(), tab_id);
-  bool grayscale =
+  bool is_grayscale =
       GetSiteInteraction(web_contents) ==
           extensions::SitePermissionsHelper::SiteInteraction::kNone &&
       !action_is_visible && !has_side_panel_action;
-  image_source->set_grayscale(grayscale);
+  image_source->set_grayscale(is_grayscale);
 
   if (base::FeatureList::IsEnabled(
           extensions_features::kExtensionsMenuAccessControl)) {
     return image_source;
   }
 
-  bool was_blocked = extensions::SitePermissionsHelper(browser_->profile())
-                         .HasBeenBlocked(*extension(), web_contents);
+  bool was_blocked = extensions::SitePermissionsHelper(profile_).HasBeenBlocked(
+      *extension(), web_contents);
   image_source->set_paint_blocked_actions_decoration(was_blocked);
 
   return image_source;

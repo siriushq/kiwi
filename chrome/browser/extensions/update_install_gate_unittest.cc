@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/extensions/update_install_gate.h"
+#include "extensions/browser/update_install_gate.h"
 
 #include <memory>
 
@@ -13,11 +13,14 @@
 #include "base/run_loop.h"
 #include "base/values.h"
 #include "build/chromeos_buildflags.h"
+#include "chrome/browser/custom_handlers/protocol_handler_registry_factory.h"
 #include "chrome/browser/extensions/extension_service.h"
+#include "chrome/browser/extensions/scoped_test_mv2_enabler.h"
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
+#include "components/custom_handlers/simple_protocol_handler_registry_factory.h"
 #include "content/public/test/browser_task_environment.h"
 #include "content/public/test/mock_render_process_host.h"
 #include "content/public/test/test_renderer_host.h"
@@ -123,6 +126,11 @@ class UpdateInstallGateTest : public testing::Test {
     fake_user_manager_->LoginUser(account_id);
 #endif
     profile_ = profile_manager_->CreateTestingProfile(kUserProfile);
+    // Use SimpleProtocolHandlerRegistryFactory to prevent OS integration during
+    // the protocol registration process.
+    ProtocolHandlerRegistryFactory::GetInstance()->SetTestingFactory(
+        profile_, custom_handlers::SimpleProtocolHandlerRegistryFactory::
+                      GetDefaultFactory());
     render_process_host_ =
         std::make_unique<content::MockRenderProcessHost>(profile_);
     base::RunLoop().RunUntilIdle();
@@ -236,6 +244,12 @@ class UpdateInstallGateTest : public testing::Test {
   scoped_refptr<const Extension> new_app_;
   scoped_refptr<const Extension> new_persistent_;
   scoped_refptr<const Extension> new_none_persistent_;
+
+  // This test relies on legacy MV2 extensions with persistent and non-
+  // persistent background pages.
+  // TODO(https://crbug.com/40804030): Migrate this to only rely on MV3
+  // extensions.
+  ScopedTestMV2Enabler mv2_enabler_;
 };
 
 TEST_F(UpdateInstallGateTest, InstallOnServiceNotReady) {

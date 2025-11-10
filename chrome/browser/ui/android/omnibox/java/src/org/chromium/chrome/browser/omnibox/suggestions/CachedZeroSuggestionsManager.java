@@ -20,15 +20,16 @@ import android.content.SharedPreferences;
 import android.text.TextUtils;
 import android.util.Base64;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import com.google.protobuf.InvalidProtocolBufferException;
 
 import org.chromium.base.ContextUtils;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
-import org.chromium.components.embedder_support.util.UrlConstants;
+import org.chromium.chrome.browser.url_constants.UrlConstantResolver;
+import org.chromium.chrome.browser.url_constants.UrlConstantResolverFactory;
 import org.chromium.components.metrics.OmniboxEventProtos.OmniboxEventProto.PageClassification;
 import org.chromium.components.omnibox.AutocompleteProto.AutocompleteResultProto;
 import org.chromium.components.omnibox.AutocompleteResult;
@@ -38,6 +39,7 @@ import java.util.Locale;
 import java.util.Set;
 
 /** CachedZeroSuggestionsManager manages caching and restoring zero suggestions. */
+@NullMarked
 public class CachedZeroSuggestionsManager {
     /** Jump-Start Omnibox: the context of the most recently visited page. */
     public static class JumpStartContext {
@@ -77,7 +79,7 @@ public class CachedZeroSuggestionsManager {
 
     /** Save the content of the CachedZeroSuggestionsManager to SharedPreferences cache. */
     @SuppressWarnings("ApplySharedPref")
-    public static void saveToCache(int pageClass, @NonNull AutocompleteResult resultToCache) {
+    public static void saveToCache(int pageClass, AutocompleteResult resultToCache) {
         SharedPreferences prefs = ContextUtils.getAppSharedPreferences();
 
         var serializedBytes = resultToCache.serialize().toByteArray();
@@ -114,7 +116,7 @@ public class CachedZeroSuggestionsManager {
      *
      * @return AutocompleteResult populated with the content of the SharedPreferences cache.
      */
-    static @NonNull AutocompleteResult readFromCache(int pageClass) {
+    static AutocompleteResult readFromCache(int pageClass) {
         SharedPreferences prefs = ContextUtils.getAppSharedPreferences();
         String key = getCacheKey(pageClass);
 
@@ -169,9 +171,11 @@ public class CachedZeroSuggestionsManager {
      * <p>This function always returns a valid object, even if there's no data to read, falling back
      * to the context of a NTP.
      */
-    public static @NonNull JumpStartContext readJumpStartContext() {
+    public static JumpStartContext readJumpStartContext() {
         SharedPreferences prefs = ContextUtils.getAppSharedPreferences();
-        String url = prefs.getString(KEY_JUMP_START_URL, UrlConstants.NTP_URL);
+        UrlConstantResolver defaultResolver =
+                UrlConstantResolverFactory.getForProfile(/* profile= */ null);
+        String url = prefs.getString(KEY_JUMP_START_URL, defaultResolver.getNtpUrl());
         int pageClass =
                 prefs.getInt(
                         KEY_JUMP_START_PAGE_CLASS,

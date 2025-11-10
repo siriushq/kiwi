@@ -10,7 +10,7 @@
 #include <vector>
 
 #include "ui/display/types/display_constants.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_ui_types.h"
 
 class Browser;
 class Profile;
@@ -110,7 +110,9 @@ Browser* FindBrowserWithProfile(Profile* profile);
 
 // Returns all tabbed browsers with the provided profile. Returns an empty
 // vector if no such browsers currently exist.
-std::vector<Browser*> FindAllTabbedBrowsersWithProfile(Profile* profile);
+std::vector<Browser*> FindAllTabbedBrowsersWithProfile(
+    Profile* profile,
+    bool ignore_closing_browsers = false);
 
 // Returns all browsers of any type with the provided profile. Returns an empty
 // vector if no such browsers currently exist.

@@ -10,15 +10,18 @@
 #include "base/json/json_writer.h"
 #include "base/values.h"
 #include "build/chromeos_buildflags.h"
+#include "chrome/browser/custom_handlers/protocol_handler_registry_factory.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/browser/sessions/session_tab_helper_factory.h"
 #include "chrome/test/base/testing_profile.h"
+#include "components/custom_handlers/simple_protocol_handler_registry_factory.h"
 #include "components/sessions/content/session_tab_helper.h"
 #include "content/public/test/browser_task_environment.h"
 #include "content/public/test/test_utils.h"
 #include "content/public/test/web_contents_tester.h"
 #include "extensions/browser/extension_prefs.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/common/extension_builder.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -111,6 +114,12 @@ TestExtensionEnvironment::TestExtensionEnvironment(
                    ? nullptr
                    : std::make_unique<TestingProfile>()),
       profile_ptr_(profile_.get()) {
+
+  // Use SimpleProtocolHandlerRegistryFactory to prevent OS integration during
+  // the protocol registration process.
+  ProtocolHandlerRegistryFactory::GetInstance()->SetTestingFactory(
+      profile_ptr_, custom_handlers::SimpleProtocolHandlerRegistryFactory::
+                        GetDefaultFactory());
 }
 
 TestExtensionEnvironment::~TestExtensionEnvironment() = default;
@@ -138,12 +147,20 @@ ExtensionPrefs* TestExtensionEnvironment::GetExtensionPrefs() {
   return ExtensionPrefs::Get(profile());
 }
 
+ExtensionRegistrar* TestExtensionEnvironment::GetExtensionRegistrar() {
+  // TODO(crbug.com/40355585): This is necessary to set up ExtensionService,
+  // due to dependencies it initializes. Revisit this once that's no longer
+  // the case.
+  GetExtensionService();
+  return ExtensionRegistrar::Get(profile());
+}
+
 const Extension* TestExtensionEnvironment::MakeExtension(
     const base::Value::Dict& manifest_extra) {
   base::Value::Dict manifest = MakeExtensionManifest(manifest_extra);
   scoped_refptr<const Extension> result =
       ExtensionBuilder().SetManifest(std::move(manifest)).Build();
-  GetExtensionService()->AddExtension(result.get());
+  GetExtensionRegistrar()->AddExtension(result.get());
   return result.get();
 }
 
@@ -153,7 +170,7 @@ const Extension* TestExtensionEnvironment::MakeExtension(
   base::Value::Dict manifest = MakeExtensionManifest(manifest_extra);
   scoped_refptr<const Extension> result =
       ExtensionBuilder().SetManifest(std::move(manifest)).SetID(id).Build();
-  GetExtensionService()->AddExtension(result.get());
+  GetExtensionRegistrar()->AddExtension(result.get());
   return result.get();
 }
 
@@ -167,7 +184,7 @@ scoped_refptr<const Extension> TestExtensionEnvironment::MakePackagedApp(
           .SetID(id)
           .Build();
   if (install) {
-    GetExtensionService()->AddExtension(result.get());
+    GetExtensionRegistrar()->AddExtension(result.get());
   }
   return result;
 }
@@ -185,6 +202,10 @@ void TestExtensionEnvironment::DeleteProfile() {
   profile_ptr_ = nullptr;
   profile_.reset();
   extension_service_ = nullptr;
+}
+
+void TestExtensionEnvironment::ProfileMarkedForPermanentDeletionForTest() {
+  GetExtensionService()->ProfileMarkedForPermanentDeletionForTest();
 }
 
 }  // namespace extensions
