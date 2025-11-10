@@ -54,12 +54,9 @@ void FontBuilder::DidChangeWritingMode() {
 }
 
 void FontBuilder::DidChangeTextSizeAdjust() {
-  // When `TextSizeAdjustImprovements` is enabled, text-size-adjust affects
-  // font-size during style building, and needs to invalidate the font
-  // description.
-  if (RuntimeEnabledFeatures::TextSizeAdjustImprovementsEnabled()) {
-    Set(PropertySetFlag::kTextSizeAdjust);
-  }
+  // text-size-adjust affects font-size during style building, and needs to
+  // invalidate the font description.
+  Set(PropertySetFlag::kTextSizeAdjust);
 }
 
 FontFamily FontBuilder::StandardFontFamily() const {
@@ -248,6 +245,12 @@ void FontBuilder::SetVariationSettings(
   font_description_.SetVariationSettings(std::move(settings));
 }
 
+void FontBuilder::SetFontLanguageOverride(
+    const AtomicString& language_override) {
+  Set(PropertySetFlag::kFontLanguageOverride);
+  font_description_.SetFontLanguageOverride(language_override);
+}
+
 void FontBuilder::SetFamilyDescription(
     FontDescription& font_description,
     const FontDescription::FamilyDescription& family_description) {
@@ -307,11 +310,9 @@ float FontBuilder::GetComputedSizeFromSpecifiedSize(
   }
 
   if (!builder.GetTextSizeAdjust().IsAuto()) {
-    if (RuntimeEnabledFeatures::TextSizeAdjustImprovementsEnabled()) {
-      Settings* settings = document_->GetSettings();
-      if (settings && settings->GetTextAutosizingEnabled()) {
-        zoom_factor *= builder.GetTextSizeAdjust().Multiplier();
-      }
+    Settings* settings = document_->GetSettings();
+    if (settings && settings->GetTextAutosizingEnabled()) {
+      zoom_factor *= builder.GetTextSizeAdjust().Multiplier();
     }
   }
 
@@ -387,9 +388,9 @@ void FontBuilder::UpdateAdjustedSize(FontDescription& font_description,
   // FontDescription::EffectiveFontSize.
   font_description.SetAdjustedSize(computed_size);
 
-  Font font(font_description, font_selector);
+  Font* font = MakeGarbageCollected<Font>(font_description, font_selector);
 
-  const SimpleFontData* font_data = font.PrimaryFont();
+  const SimpleFontData* font_data = font->PrimaryFont();
   if (!font_data) {
     return;
   }
@@ -397,8 +398,8 @@ void FontBuilder::UpdateAdjustedSize(FontDescription& font_description,
   FontSizeAdjust size_adjust = font_description.SizeAdjust();
   if (size_adjust.IsFromFont() &&
       size_adjust.Value() == FontSizeAdjust::kFontSizeAdjustNone) {
-    std::optional<float> aspect_value = FontSizeFunctions::FontAspectValue(
-        font_data, size_adjust.GetMetric(), font_description.ComputedSize());
+    std::optional<float> aspect_value =
+        FontSizeFunctions::FontAspectValue(font_data, size_adjust.GetMetric());
     font_description.SetSizeAdjust(FontSizeAdjust(
         aspect_value.has_value() ? aspect_value.value()
                                  : FontSizeAdjust::kFontSizeAdjustNone,
@@ -510,6 +511,14 @@ bool FontBuilder::UpdateFontDescription(FontDescription& description,
         font_description_.VariationSettings()) {
       modified = true;
       description.SetVariationSettings(font_description_.VariationSettings());
+    }
+  }
+  if (IsSet(PropertySetFlag::kFontLanguageOverride)) {
+    if (description.FontLanguageOverride() !=
+        font_description_.FontLanguageOverride()) {
+      modified = true;
+      description.SetFontLanguageOverride(
+          font_description_.FontLanguageOverride());
     }
   }
   if (IsSet(PropertySetFlag::kFontSynthesisWeight)) {
@@ -637,7 +646,7 @@ FontSelector* FontBuilder::ComputeFontSelector(
   if (IsSet(PropertySetFlag::kFamily)) {
     return FontSelectorFromTreeScope(family_tree_scope_);
   } else {
-    return builder.GetFont().GetFontSelector();
+    return builder.GetFont()->GetFontSelector();
   }
 }
 
@@ -667,7 +676,7 @@ void FontBuilder::CreateFont(ComputedStyleBuilder& builder,
   FontSelector* font_selector = ComputeFontSelector(builder);
   UpdateAdjustedSize(description, font_selector);
 
-  builder.SetFont(Font(description, font_selector));
+  builder.SetFont(MakeGarbageCollected<Font>(description, font_selector));
   flags_ = 0;
 }
 
@@ -687,7 +696,7 @@ void FontBuilder::CreateInitialFont(ComputedStyleBuilder& builder) {
   font_description.SetOrientation(builder.ComputeFontOrientation());
 
   FontSelector* font_selector = document_->GetStyleEngine().GetFontSelector();
-  builder.SetFont(Font(font_description, font_selector));
+  builder.SetFont(MakeGarbageCollected<Font>(font_description, font_selector));
 }
 
 }  // namespace blink

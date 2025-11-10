@@ -26,9 +26,9 @@
 
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/editing/forward.h"
-#include "third_party/blink/renderer/core/layout/geometry/physical_offset.h"
 #include "third_party/blink/renderer/core/layout/geometry/physical_rect.h"
 #include "third_party/blink/renderer/core/layout/hit_test_request.h"
+#include "third_party/blink/renderer/platform/geometry/physical_offset.h"
 #include "third_party/blink/renderer/platform/graphics/compositor_element_id.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_linked_hash_set.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
@@ -55,13 +55,14 @@ class MediaSourceHandle;
 class MediaStreamDescriptor;
 class Node;
 class PhysicalBoxFragment;
+class ScrollableArea;
 class Scrollbar;
 
 class CORE_EXPORT HitTestResult {
   DISALLOW_NEW();
 
  public:
-  typedef HeapLinkedHashSet<Member<Node>> NodeSet;
+  using NodeSet = GCedHeapLinkedHashSet<Member<Node>>;
 
   HitTestResult();
   HitTestResult(const HitTestRequest&, const HitTestLocation&);
@@ -87,6 +88,7 @@ class CORE_EXPORT HitTestResult {
   Node* InnerPossiblyPseudoNode() const {
     return inner_possibly_pseudo_node_.Get();
   }
+  static ScrollableArea* GetScrollableArea(const Node*);
   CompositorElementId GetScrollableContainer() const;
   Element* InnerElement() const { return inner_element_.Get(); }
 

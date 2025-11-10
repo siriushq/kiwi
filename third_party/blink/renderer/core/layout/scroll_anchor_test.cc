@@ -50,7 +50,8 @@ class ScrollAnchorTest : public SimTest {
   void Update() { Compositor().BeginFrame(); }
 
   void SetBodyInnerHTML(const String& body_content) {
-    GetDocument().body()->setInnerHTML(body_content, ASSERT_NO_EXCEPTION);
+    GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(body_content,
+                                                          ASSERT_NO_EXCEPTION);
     Update();
   }
 
@@ -808,7 +809,7 @@ TEST_F(ScrollAnchorTest, SerializeAnchorFailsForShadowDOMElement) {
       <div></div>)HTML");
   auto* host = GetDocument().getElementById(AtomicString("host"));
   auto& shadow_root = host->AttachShadowRootForTesting(ShadowRootMode::kOpen);
-  shadow_root.setInnerHTML(R"HTML(
+  shadow_root.SetInnerHTMLWithoutTrustedTypes(R"HTML(
       <style>
         div { height: 100px; }
       </style>
@@ -1005,7 +1006,8 @@ TEST_F(ScrollAnchorTest, ClampAdjustsAnchorAnimation) {
     <div class="content" id=four></div>
   )HTML");
   LayoutViewport()->SetScrollOffset(ScrollOffset(0, 2000),
-                                    mojom::blink::ScrollType::kUser);
+                                    mojom::blink::ScrollType::kUser,
+                                    cc::ScrollSourceType::kStationaryScroll);
   Update();
   GetDocument()
       .getElementById(AtomicString("hidden"))
@@ -1090,7 +1092,8 @@ class ScrollAnchorFindInPageTest : public testing::Test {
   }
 
   void SetHtmlInnerHTML(const char* content) {
-    GetDocument().documentElement()->setInnerHTML(String::FromUTF8(content));
+    GetDocument().documentElement()->SetInnerHTMLWithoutTrustedTypes(
+        String::FromUTF8(content));
     UpdateAllLifecyclePhasesForTest();
   }
 
@@ -1148,7 +1151,8 @@ TEST_F(ScrollAnchorFindInPageTest, FindInPageResultPrioritized) {
   )HTML");
 
   LayoutViewport()->SetScrollOffset(ScrollOffset(0, 150),
-                                    mojom::blink::ScrollType::kUser);
+                                    mojom::blink::ScrollType::kUser,
+                                    cc::ScrollSourceType::kStationaryScroll);
 
   const String search_text = "findme";
   ScrollAnchorTestFindInPageClient client;
@@ -1196,7 +1200,8 @@ TEST_F(ScrollAnchorFindInPageTest, FocusPrioritizedOverFindInPage) {
   )HTML");
 
   LayoutViewport()->SetScrollOffset(ScrollOffset(0, 150),
-                                    mojom::blink::ScrollType::kUser);
+                                    mojom::blink::ScrollType::kUser,
+                                    cc::ScrollSourceType::kStationaryScroll);
 
   const String search_text = "findme";
   ScrollAnchorTestFindInPageClient client;
@@ -1258,7 +1263,8 @@ TEST_F(ScrollAnchorFindInPageTest, FocusedUnderStickyIsSkipped) {
   )HTML");
 
   LayoutViewport()->SetScrollOffset(ScrollOffset(0, 150),
-                                    mojom::blink::ScrollType::kUser);
+                                    mojom::blink::ScrollType::kUser,
+                                    cc::ScrollSourceType::kStationaryScroll);
 
   GetDocument().getElementById(AtomicString("target"))->Focus();
 
@@ -1302,7 +1308,7 @@ TEST_F(ScrollAnchorPageTest, SvgRelativeBoundsCrashAfterClearLayoutResults) {
   Document& doc = GetDocument();
   doc.UpdateStyleAndLayout(DocumentUpdateReason::kTest);
 
-  doc.getElementById(AtomicString("target"))->scrollIntoView();
+  doc.getElementById(AtomicString("target"))->scrollIntoViewForTesting();
   doc.getElementById(AtomicString("scrollbarSummoner"))
       ->setAttribute(html_names::kStyleAttr,
                      AtomicString("display:block; contain:size; height:0"));

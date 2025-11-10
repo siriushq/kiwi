@@ -16,7 +16,6 @@
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/crx_file/id_util.h"
@@ -95,10 +94,6 @@ class ContentCapabilitiesTest : public extensions::ExtensionApiTest {
     return "[" + list + "]";
   }
 
-  content::WebContents* web_contents() {
-    return browser()->tab_strip_model()->GetActiveWebContents();
-  }
-
   GURL GetTestURLFor(const std::string& host) {
     std::string port =
         base::NumberToString(embedded_https_test_server().port());
@@ -111,7 +106,8 @@ class ContentCapabilitiesTest : public extensions::ExtensionApiTest {
   }
 
   content::RenderFrameHost* GetRenderFrameHost() {
-    return content::ToRenderFrameHost(web_contents()).render_frame_host();
+    return content::ToRenderFrameHost(GetActiveWebContents())
+        .render_frame_host();
   }
 
   void SetPermissionOverrideForAsyncClipboardTests(
@@ -145,16 +141,16 @@ class ContentCapabilitiesTest : public extensions::ExtensionApiTest {
 
   void CheckSiteCanRead(bool expected) {
     content::WebContents::FromRenderFrameHost(GetRenderFrameHost())->Focus();
-    EXPECT_EQ(expected, content::ExecJs(web_contents(),
+    EXPECT_EQ(expected, content::ExecJs(GetActiveWebContents(),
                                         "navigator.clipboard.readText()"));
   }
 
   void CheckSiteCanWrite(bool expected) {
     content::WebContents::FromRenderFrameHost(GetRenderFrameHost())->Focus();
-    EXPECT_EQ(
-        expected,
-        content::ExecJs(web_contents(), "navigator.clipboard.writeText('Test')",
-                        content::EXECUTE_SCRIPT_NO_USER_GESTURE));
+    EXPECT_EQ(expected,
+              content::ExecJs(GetActiveWebContents(),
+                              "navigator.clipboard.writeText('Test')",
+                              content::EXECUTE_SCRIPT_NO_USER_GESTURE));
   }
 
   // Run some script in the context of the given origin and in the presence of
@@ -164,8 +160,8 @@ class ContentCapabilitiesTest : public extensions::ExtensionApiTest {
   testing::AssertionResult TestScriptResult(const Extension* extension,
                                             const GURL& url,
                                             const char* code) {
-    EXPECT_TRUE(ui_test_utils::NavigateToURL(browser(), url));
-    if (!content::EvalJs(web_contents(), code).ExtractBool()) {
+    EXPECT_TRUE(NavigateToURL(GetActiveWebContents(), url));
+    if (!content::EvalJs(GetActiveWebContents(), code).ExtractBool()) {
       return testing::AssertionFailure();
     }
     return testing::AssertionSuccess();
@@ -251,15 +247,8 @@ IN_PROC_BROWSER_TEST_F(ContentCapabilitiesTest, ClipboardWrite) {
   // script without a user gesture.
   EXPECT_TRUE(
       CanWriteClipboard(extension.get(), GetTestURLFor("bar.example.com")));
-  if (base::FeatureList::IsEnabled(
-          features::kUserActivationSameOriginVisibility)) {
-    EXPECT_TRUE(CanWriteClipboardInAboutBlankFrame(
-        extension.get(), GetTestURLFor("bar.example.com")));
-  } else {
-    // In UserActivationV2, acitvation doesn't propagate to a child frame.
-    EXPECT_FALSE(CanWriteClipboardInAboutBlankFrame(
-        extension.get(), GetTestURLFor("bar.example.com")));
-  }
+  EXPECT_TRUE(CanWriteClipboardInAboutBlankFrame(
+      extension.get(), GetTestURLFor("bar.example.com")));
 
   EXPECT_FALSE(
       CanReadClipboard(extension.get(), GetTestURLFor("foo.example.com")));
@@ -340,8 +329,7 @@ IN_PROC_BROWSER_TEST_F(ContentCapabilitiesTest, WebUnlimitedStorageIsIsolated) {
   scoped_refptr<const Extension> extension = LoadExtensionWithCapabilities(
       MakeJSONList("https://bar.example.com/*"),
       MakeJSONList("unlimitedStorage"), MakeJSONList("storage"));
-  EXPECT_FALSE(
-      HasUnlimitedStorage(extension.get(), extension->GetResourceURL("")));
+  EXPECT_FALSE(HasUnlimitedStorage(extension.get(), extension->url()));
   EXPECT_TRUE(
       HasUnlimitedStorage(extension.get(), GetTestURLFor("bar.example.com")));
 }
@@ -353,8 +341,7 @@ IN_PROC_BROWSER_TEST_F(ContentCapabilitiesTest,
       MakeJSONList("https://foo.example.com/*"), MakeJSONList("clipboardRead"),
       MakeJSONList("unlimitedStorage"));
 
-  EXPECT_TRUE(
-      HasUnlimitedStorage(extension.get(), extension->GetResourceURL("")));
+  EXPECT_TRUE(HasUnlimitedStorage(extension.get(), extension->url()));
   EXPECT_FALSE(
       HasUnlimitedStorage(extension.get(), GetTestURLFor("foo.example.com")));
 }

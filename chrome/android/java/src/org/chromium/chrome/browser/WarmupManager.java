@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.Intent;
@@ -25,7 +27,6 @@ import android.view.ViewStub;
 import android.widget.FrameLayout;
 
 import androidx.annotation.IntDef;
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 import androidx.asynclayoutinflater.appcompat.AsyncAppCompatFactory;
 import androidx.core.content.res.ResourcesCompat;
@@ -33,19 +34,19 @@ import androidx.core.content.res.ResourcesCompat;
 import org.jni_zero.JniType;
 import org.jni_zero.NativeMethods;
 
-import org.chromium.base.BuildInfo;
 import org.chromium.base.ContextUtils;
+import org.chromium.base.DeviceInfo;
 import org.chromium.base.Log;
 import org.chromium.base.ResettersForTesting;
-import org.chromium.base.TerminationStatus;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.TraceEvent;
 import org.chromium.base.library_loader.LibraryLoader;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.task.AsyncTask;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.app.tab_activity_glue.ReparentingTask;
-import org.chromium.chrome.browser.content.WebContentsFactory;
 import org.chromium.chrome.browser.crash.ChromePureJavaExceptionReporter;
 import org.chromium.chrome.browser.customtabs.CustomTabDelegateFactory;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
@@ -55,13 +56,12 @@ import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabBuilder;
 import org.chromium.chrome.browser.tab.TabDelegateFactory;
 import org.chromium.chrome.browser.tab.TabLaunchType;
+import org.chromium.chrome.browser.tab.TabLoadIfNeededCaller;
+import org.chromium.chrome.browser.tab.TabSelectionType;
 import org.chromium.chrome.browser.tab.TabUtils;
 import org.chromium.chrome.browser.toolbar.ControlContainer;
 import org.chromium.components.embedder_support.util.UrlConstants;
-import org.chromium.content_public.browser.Visibility;
 import org.chromium.content_public.browser.WebContents;
-import org.chromium.content_public.browser.WebContentsObserver;
-import org.chromium.net.NetId;
 import org.chromium.ui.LayoutInflaterUtils;
 import org.chromium.ui.base.WindowAndroid;
 import org.chromium.ui.display.DisplayUtil;
@@ -83,20 +83,11 @@ import java.util.Set;
  * This class is a singleton that holds utilities for warming up Chrome and prerendering urls
  * without creating the Activity.
  *
- * This class is not thread-safe and must only be used on the UI thread.
+ * <p>This class is not thread-safe and must only be used on the UI thread.
  */
+@NullMarked
 public class WarmupManager {
     private static final String TAG = "WarmupManager";
-
-    /**
-     * Observes spare WebContents deaths. In case of death, records stats, and cleanup the objects.
-     */
-    private class RenderProcessGoneObserver extends WebContentsObserver {
-        @Override
-        public void primaryMainFrameRenderProcessGone(@TerminationStatus int terminationStatus) {
-            destroySpareWebContentsInternal();
-        }
-    }
 
     /** Records stats, observes crashes, and cleans up spareTab object. */
     private class HiddenTabObserver extends EmptyTabObserver {
@@ -122,10 +113,11 @@ public class WarmupManager {
         }
 
         @Override
-        public void onActivityAttachmentChanged(Tab tab, WindowAndroid window) {
+        public void onActivityAttachmentChanged(Tab tab, @Nullable WindowAndroid window) {
             destroyOwnedWindow(tab);
         }
 
+        @SuppressWarnings("NullAway")
         private void destroyOwnedWindow(Tab tab) {
             assert mOwnedWindowAndroid != null;
             mOwnedWindowAndroid.destroy();
@@ -136,7 +128,7 @@ public class WarmupManager {
 
     /** Context wrapper that routes APIs via Activity context once it's available. */
     private static class CctContextWrapper extends ContextThemeWrapper {
-        Context mActivityContext;
+        /*package*/ @Nullable Context mActivityContext;
 
         public CctContextWrapper(Context base, int themeResId) {
             super(base, themeResId);
@@ -152,20 +144,17 @@ public class WarmupManager {
     }
 
     @SuppressLint("StaticFieldLeak")
-    private static WarmupManager sWarmupManager;
+    private static @Nullable WarmupManager sWarmupManager;
 
     private final Set<String> mDnsRequestsInFlight;
     private final Map<String, Profile> mPendingPreconnectWithProfile;
 
     private int mToolbarContainerId;
-    private ViewGroup mMainView;
-    @VisibleForTesting WebContents mSpareWebContents;
-    private RenderProcessGoneObserver mObserver;
-    private boolean mIsCctPrewarmTabEnabled;
+    private @Nullable ViewGroup mMainView;
 
     // Stores a prebuilt tab. To load a URL, this can be used if available instead of creating one
     // from scratch.
-    @VisibleForTesting Tab mSpareTab;
+    @VisibleForTesting /*package*/ @Nullable Tab mSpareTab;
 
     /**
      * Represents various states of spareTab.
@@ -191,7 +180,7 @@ public class WarmupManager {
         int NUM_ENTRIES = 5;
     }
 
-    @SpareTabFinalStatus int mSpareTabFinalStatus;
+    /*package*/ @SpareTabFinalStatus int mSpareTabFinalStatus;
 
     /**
      * Records the spareTab final status.
@@ -212,7 +201,7 @@ public class WarmupManager {
         }
     }
 
-    private void destroySpareTabInternal(Tab tab) {
+    private void destroySpareTabInternal(@Nullable Tab tab) {
         // Don't do anything if the spare tab doesn't exist.
         if (mSpareTab == null) return;
 
@@ -271,7 +260,9 @@ public class WarmupManager {
         }
 
         if (mSpareTab != null) {
-            mSpareTab.addObserver(new HiddenTabObserver(mSpareTab.getWindowAndroid()));
+            WindowAndroid window = mSpareTab.getWindowAndroid();
+            assumeNonNull(window);
+            mSpareTab.addObserver(new HiddenTabObserver(window));
         }
     }
 
@@ -289,7 +280,7 @@ public class WarmupManager {
 
         // These are effectively unused as they will be set when finishing reparenting.
         TabDelegateFactory delegateFactory = CustomTabDelegateFactory.createEmpty();
-        WindowAndroid window = new WindowAndroid(context);
+        WindowAndroid window = new WindowAndroid(context, /* trackOcclusion= */ false);
 
         // TODO(crbug.com/40174356): Set isIncognito flag here if spare tabs are allowed for
         // incognito mode.
@@ -308,7 +299,9 @@ public class WarmupManager {
         Rect bounds = TabUtils.estimateContentSize(context);
         int width = bounds.right - bounds.left;
         int height = bounds.bottom - bounds.top;
-        tab.getWebContents().setSize(width, height);
+        webContents = tab.getWebContents();
+        assumeNonNull(webContents);
+        webContents.setSize(width, height);
 
         // Reparent the tab to detach it from the current activity.
         ReparentingTask.from(tab).detach();
@@ -322,9 +315,10 @@ public class WarmupManager {
      * @param type TabLaunchType of the requested tab.
      * @return the spare Tab.
      */
-    public Tab takeSpareTab(Profile profile, @TabLaunchType int type) {
+    public Tab takeSpareTab(Profile profile, boolean initiallyHidden, @TabLaunchType int type) {
         ThreadUtils.assertOnUiThread();
         try (TraceEvent e = TraceEvent.scoped("WarmupManager.takeSpareTab")) {
+            assert mSpareTab != null : "Attempted to take a null spare tab.";
             if (mSpareTab.getProfile() != profile) {
                 throw new RuntimeException("Attempted to take the tab from another profile.");
             }
@@ -334,6 +328,12 @@ public class WarmupManager {
 
             spareTab.setTabLaunchType(type);
             mSpareTabFinalStatus = SpareTabFinalStatus.TAB_USED;
+
+            if (!initiallyHidden) {
+                spareTab.show(
+                        TabSelectionType.FROM_NEW,
+                        TabLoadIfNeededCaller.REQUEST_TO_SHOW_TAB_THEN_SHOW);
+            }
 
             // Record the SpareTabFinalStatus once its used.
             recordSpareTabFinalStatusHistogram(mSpareTabFinalStatus);
@@ -417,7 +417,7 @@ public class WarmupManager {
     @VisibleForTesting
     static Context applyContextOverrides(Context baseContext) {
         // Scale up the UI for the base Context on automotive
-        if (BuildInfo.getInstance().isAutomotive) {
+        if (DeviceInfo.isAutomotive()) {
             Configuration config = new Configuration();
             DisplayUtil.scaleUpConfigurationForAutomotive(baseContext, config);
             return baseContext.createConfigurationContext(config);
@@ -430,7 +430,10 @@ public class WarmupManager {
         // TODO(twellington): Look at improving code sharing with ChromeBaseAppCompatActivity
         // if the number of these overlays grows. The two below are experimental / are planned to be
         // removed by mid 2025 or sooner.
-        if (ChromeFeatureList.sAndroidElegantTextHeight.isEnabled()) {
+        // TODO(https://crbug.com/392634251): Explore setting elegantTextHeight to 'true' on older
+        // OS versions.
+        if (ChromeFeatureList.sAndroidElegantTextHeight.isEnabled()
+                && Build.VERSION.SDK_INT >= VERSION_CODES.TIRAMISU) {
             int elegantTextHeightOverlay = R.style.ThemeOverlay_BrowserUI_ElegantTextHeight;
             context.getTheme().applyStyle(elegantTextHeightOverlay, true);
         }
@@ -449,7 +452,7 @@ public class WarmupManager {
      * @param toolbarContainerId Id of the toolbar container.
      * @param toolbarId The toolbar's layout ID.
      */
-    private static ViewGroup inflateViewHierarchy(
+    private static @Nullable ViewGroup inflateViewHierarchy(
             CctContextWrapper context, int toolbarContainerId, int toolbarId) {
         try (TraceEvent e = TraceEvent.scoped("WarmupManager.inflateViewHierarchy")) {
             FrameLayout contentHolder = new FrameLayout(context);
@@ -496,9 +499,9 @@ public class WarmupManager {
     public void transferViewHierarchyTo(ViewGroup contentView) {
         ThreadUtils.assertOnUiThread();
         ViewGroup from = mMainView;
-        Set<Theme> rebasedThemes = new ArraySet<Theme>(from.getChildCount());
         mMainView = null;
         if (from == null) return;
+        Set<Theme> rebasedThemes = new ArraySet<>(from.getChildCount());
         ((CctContextWrapper) from.getContext()).mActivityContext = contentView.getContext();
         while (from.getChildCount() > 0) {
             View currentChild = from.getChildAt(0);
@@ -652,24 +655,12 @@ public class WarmupManager {
             String url, boolean usePrefetchProxy, @Nullable String verifiedSourceOrigin) {
         try (TraceEvent e = TraceEvent.scoped("WarmupManager.startPrefetchFromCct")) {
             ThreadUtils.assertOnUiThread();
-            if (!ChromeFeatureList.sPrefetchBrowserInitiatedTriggers.isEnabled()
-                    || !ChromeFeatureList.sCctNavigationalPrefetch.isEnabled()) {
-                Log.w(
-                        TAG,
-                        "Prefetch failed because PrefetchBrowserInitiatedTriggers and/or"
-                                + " CCTNavigationalPrefetch is not enabled.");
+            if (!ChromeFeatureList.sCctNavigationalPrefetch.isEnabled()) {
+                Log.w(TAG, "CCTNavigationalPrefetch is not enabled.");
                 return;
             }
 
-            WebContents webContents = null;
-            if (ChromeFeatureList.isEnabled(ChromeFeatureList.CCT_PREWARM_TAB)
-                    && mSpareTab != null) {
-                webContents = mSpareTab.getWebContents();
-            } else {
-                webContents = mSpareWebContents;
-            }
-
-            if (webContents == null) {
+            if (mSpareTab == null || mSpareTab.getWebContents() == null) {
                 Log.e(
                         TAG,
                         "Prefetch failed because spare WebContents is null. warmup() is required"
@@ -682,93 +673,9 @@ public class WarmupManager {
                 origin = Origin.create(new GURL(verifiedSourceOrigin));
             }
             WarmupManagerJni.get()
-                    .startPrefetchFromCct(webContents, gurl, usePrefetchProxy, origin);
+                    .startPrefetchFromCct(
+                            mSpareTab.getWebContents(), gurl, usePrefetchProxy, origin);
         }
-    }
-
-    /**
-     * Creates and initializes a spare WebContents, to be used in a subsequent navigation.
-     *
-     * <p>This creates a renderer that is suitable for any navigation. It can be picked up by any
-     * tab. Can be called multiple times, and must be called from the UI thread.
-     */
-    public void createSpareWebContents(Profile profile) {
-        try (TraceEvent e = TraceEvent.scoped("WarmupManager.createSpareWebContents")) {
-            ThreadUtils.assertOnUiThread();
-            if (!LibraryLoader.getInstance().isInitialized() || mSpareWebContents != null) return;
-
-            mSpareWebContents =
-                    WebContentsFactory.createWebContentsWithWarmRenderer(
-                            profile,
-                            /* initiallyHidden= */ true,
-                            /* targetNetwork= */ NetId.INVALID);
-            mObserver = new RenderProcessGoneObserver();
-            mSpareWebContents.addObserver(mObserver);
-        }
-    }
-
-    /** Destroys the spare WebContents if there is one. */
-    public void destroySpareWebContents() {
-        try (TraceEvent e = TraceEvent.scoped("WarmupManager.destroySpareWebContents")) {
-            ThreadUtils.assertOnUiThread();
-            if (mSpareWebContents == null) return;
-            destroySpareWebContentsInternal();
-        }
-    }
-
-    /**
-     * Returns a spare WebContents or null, depending on the availability of one.
-     *
-     * @param targetsNetwork whether the activity/tab associated with this WebContents targets a
-     *     network (supported only by multi-network CCT, see @{link
-     *     BrowserServicesIntentDataProvider#getTargetNetwork).
-     * @return a WebContents, or null.
-     */
-    public WebContents takeSpareWebContents(
-            boolean incognito, boolean initiallyHidden, boolean targetsNetwork) {
-        try (TraceEvent e = TraceEvent.scoped("WarmupManager.takeSpareWebContents")) {
-            ThreadUtils.assertOnUiThread();
-            if (incognito) return null;
-            // Spare WebContents are not supported for multi-network CCT. In this case it's better
-            // to always create WebContents from scratch, otherwise we might break the "WebContents
-            // associated with a CCT tab targeting a network will always have
-            // WebContents::GetTargetNetwork == that target network" invariant (see
-            // WebContentsImpl::CreateWithOpener for more info).
-            if (targetsNetwork) return null;
-            WebContents result = mSpareWebContents;
-            if (result == null) return null;
-            mSpareWebContents = null;
-            result.removeObserver(mObserver);
-            mObserver = null;
-            if (!initiallyHidden) result.updateWebContentsVisibility(Visibility.VISIBLE);
-            return result;
-        }
-    }
-
-    /**
-     * @return Whether a spare renderer is available.
-     */
-    public boolean hasSpareWebContents() {
-        return mSpareWebContents != null;
-    }
-
-    private void destroySpareWebContentsInternal() {
-        mSpareWebContents.removeObserver(mObserver);
-        mSpareWebContents.destroy();
-        mSpareWebContents = null;
-        mObserver = null;
-    }
-
-    // We do some cleanup on Activity teardown, so to avoid activating the experiment for all users
-    // regardless of whether they actually interact with the feature, cache the flag here.
-    // This only works if no non-test code calls
-    // ChromeFeatureList.isEnabled(ChromeFeatureList.CCT_PREWARM_TAB) directly.
-    public boolean isCctPrewarmTabFeatureEnabled(boolean activateExperiment) {
-        if (activateExperiment) {
-            mIsCctPrewarmTabEnabled =
-                    ChromeFeatureList.isEnabled(ChromeFeatureList.CCT_PREWARM_TAB);
-        }
-        return mIsCctPrewarmTabEnabled;
     }
 
     @NativeMethods

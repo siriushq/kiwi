@@ -9,18 +9,19 @@
 #include "build/build_config.h"
 #include "third_party/blink/renderer/core/layout/geometry/physical_rect.h"
 #include "third_party/blink/renderer/core/paint/box_border_painter.h"
+#include "third_party/blink/renderer/core/paint/contoured_border_geometry.h"
 #include "third_party/blink/renderer/core/paint/paint_auto_dark_mode.h"
 #include "third_party/blink/renderer/core/paint/paint_info.h"
-#include "third_party/blink/renderer/core/paint/rounded_border_geometry.h"
 #include "third_party/blink/renderer/core/style/border_edge.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
+#include "third_party/blink/renderer/platform/geometry/contoured_rect.h"
+#include "third_party/blink/renderer/platform/geometry/path.h"
+#include "third_party/blink/renderer/platform/geometry/stroke_data.h"
 #include "third_party/blink/renderer/platform/graphics/color.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_context.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_context_state_saver.h"
 #include "third_party/blink/renderer/platform/graphics/paint/drawing_recorder.h"
-#include "third_party/blink/renderer/platform/graphics/path.h"
 #include "third_party/blink/renderer/platform/graphics/skia/skia_utils.h"
-#include "third_party/blink/renderer/platform/graphics/stroke_data.h"
 #include "third_party/blink/renderer/platform/graphics/styled_stroke_data.h"
 #include "ui/gfx/geometry/point_conversions.h"
 #include "ui/gfx/geometry/rect.h"
@@ -35,13 +36,11 @@ float FocusRingStrokeWidth(const ComputedStyle& style) {
   DCHECK(style.OutlineStyleIsAuto());
   // Draw focus ring with thickness in proportion to the zoom level, but never
   // so narrow that it becomes invisible.
-  float width = 3.f;
-  if (style.EffectiveZoom() >= 1.0f) {
-    width = ui::NativeTheme::GetInstanceForWeb()->AdjustBorderWidthByZoom(
-        width, style.EffectiveZoom());
-    DCHECK_GE(width, 3.f);
-  }
-  return std::max(style.EffectiveZoom(), width);
+  static constexpr float kWidth = 3.0f;
+  return (style.EffectiveZoom() >= 1.0f)
+             ? ui::NativeTheme::AdjustBorderWidthByZoom(kWidth,
+                                                        style.EffectiveZoom())
+             : kWidth;
 }
 
 float FocusRingOuterStrokeWidth(const ComputedStyle& style) {
@@ -58,8 +57,7 @@ int FocusRingOffset(const ComputedStyle& style,
   DCHECK(style.OutlineStyleIsAuto());
   // How much space the focus ring would like to take from the actual border.
   const float max_inside_border_width =
-      ui::NativeTheme::GetInstanceForWeb()->AdjustBorderWidthByZoom(
-          1.0f, style.EffectiveZoom());
+      ui::NativeTheme::AdjustBorderWidthByZoom(1.0f, style.EffectiveZoom());
   int offset = info.offset;
   // Focus ring is dependent on whether the border is large enough to have an
   // inset outline. Use the smallest border edge for that test.
@@ -201,7 +199,7 @@ FloatRoundedRect::Radii ComputeCornerRadii(
     const ComputedStyle& style,
     const PhysicalRect& reference_border_rect,
     float offset) {
-  return RoundedBorderGeometry::PixelSnappedRoundedBorderWithOutsets(
+  return ContouredBorderGeometry::PixelSnappedContouredBorderWithOutsets(
              style, reference_border_rect, PhysicalBoxStrut(LayoutUnit(offset)))
       .GetRadii();
 }
@@ -445,10 +443,8 @@ class ComplexOutlinePainter {
     } else if (width_ == 1 && (outline_style_ == EBorderStyle::kRidge ||
                                outline_style_ == EBorderStyle::kGroove)) {
       outline_style_ = EBorderStyle::kSolid;
-      Color dark = color_.Dark();
-      color_ = Color(
-          (color_.Red() + dark.Red()) / 2, (color_.Green() + dark.Green()) / 2,
-          (color_.Blue() + dark.Blue()) / 2, color_.AlphaAsInteger());
+      color_ = Color::FromColorMix(Color::ColorSpace::kSRGB, std::nullopt,
+                                   color_, color_.Dark(), 0.5f, 1.0f);
     }
   }
 
@@ -463,7 +459,7 @@ class ComplexOutlinePainter {
                            outline_style_ != EBorderStyle::kDouble;
     if (use_alpha_layer) {
       context_.BeginLayer(color_.Alpha());
-      color_ = Color::FromRGB(color_.Red(), color_.Green(), color_.Blue());
+      color_ = color_.MakeOpaque();
     }
 
     SkPath outer_path = right_angle_outer_path_;
@@ -723,7 +719,8 @@ class ComplexOutlinePainter {
     int joint_offset = (width_ + 1) / 2;
     ExtendLineAtEndpoint(adjusted_line.start, adjusted_line.end, joint_offset);
     ExtendLineAtEndpoint(adjusted_line.end, adjusted_line.start, joint_offset);
-    context_.DrawLine(
+    BoxBorderPainter::DrawLineWithStyle(
+        context_,
         gfx::ToRoundedPoint(gfx::SkPointToPointF(adjusted_line.start)),
         gfx::ToRoundedPoint(gfx::SkPointToPointF(adjusted_line.end)),
         styled_stroke, auto_dark_mode);
@@ -751,7 +748,9 @@ FloatRoundedRect::Radii GetFocusRingCornerRadii(
     const PhysicalRect& reference_border_rect,
     const LayoutObject::OutlineInfo& info) {
   if (style.HasBorderRadius() &&
-      (!style.HasEffectiveAppearance() || style.HasAuthorBorderRadius())) {
+      ((style.HasEffectiveAppearance() &&
+        style.EffectiveAppearance() == AppearanceValue::kBaseSelect) ||
+       style.HasAuthorBorderRadius())) {
     auto radii = ComputeCornerRadii(style, reference_border_rect, info.offset);
     radii.SetMinimumRadius(DefaultFocusRingCornerRadius(style));
     return radii;
@@ -763,34 +762,32 @@ FloatRoundedRect::Radii GetFocusRingCornerRadii(
     // drawing the element.
     std::optional<ui::NativeTheme::Part> part;
     switch (style.EffectiveAppearance()) {
-      case kCheckboxPart:
+      case AppearanceValue::kCheckbox:
         part = ui::NativeTheme::kCheckbox;
         break;
-      case kRadioPart:
+      case AppearanceValue::kRadio:
         part = ui::NativeTheme::kRadio;
         break;
-      case kPushButtonPart:
-      case kSquareButtonPart:
-      case kButtonPart:
+      case AppearanceValue::kPushButton:
+      case AppearanceValue::kSquareButton:
+      case AppearanceValue::kButton:
         part = ui::NativeTheme::kPushButton;
         break;
-      case kTextFieldPart:
-      case kTextAreaPart:
-      case kSearchFieldPart:
+      case AppearanceValue::kTextField:
+      case AppearanceValue::kTextArea:
+      case AppearanceValue::kSearchField:
         part = ui::NativeTheme::kTextField;
         break;
       default:
         break;
     }
     if (part) {
-      float corner_radius =
+      const float corner_radius =
           ui::NativeTheme::GetInstanceForWeb()->GetBorderRadiusForPart(
               part.value(), reference_border_rect.size.width,
               reference_border_rect.size.height);
-      corner_radius =
-          ui::NativeTheme::GetInstanceForWeb()->AdjustBorderRadiusByZoom(
-              part.value(), corner_radius, style.EffectiveZoom());
-      return FloatRoundedRect::Radii(corner_radius);
+      return FloatRoundedRect::Radii(ui::NativeTheme::AdjustBorderRadiusByZoom(
+          part.value(), corner_radius, style.EffectiveZoom()));
     }
   }
 
@@ -907,8 +904,8 @@ void OutlinePainter::PaintOutlineRects(
         AdjustedOutlineOffset(*united_outline_rect, info.offset);
     BoxBorderPainter::PaintSingleRectOutline(
         paint_info.context, style, outline_rects[0], info.width,
-        PhysicalBoxStrut(offset.top(), offset.right(), offset.bottom(),
-                         offset.left()));
+        PhysicalBoxStrut::FromInts(offset.top(), offset.right(),
+                                   offset.bottom(), offset.left()));
     return;
   }
 
@@ -920,6 +917,9 @@ void OutlinePainter::PaintOutlineRects(
 void OutlinePainter::PaintFocusRingPath(GraphicsContext& context,
                                         const Path& focus_ring_path,
                                         const ComputedStyle& style) {
+  if (!style.OutlineStyleIsAuto()) {
+    return;
+  }
   // TODO(crbug/251206): Implement outline-offset and double focus rings like
   // right angle focus rings, which requires SkPathOps to support expanding and
   // shrinking generic paths.

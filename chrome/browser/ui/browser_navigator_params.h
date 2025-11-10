@@ -11,8 +11,9 @@
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/time/time.h"
+#include "build/android_buildflags.h"
 #include "build/build_config.h"
 #include "chrome/browser/ui/tabs/tab_enums.h"
 #include "components/captive_portal/core/captive_portal_types.h"
@@ -31,7 +32,6 @@
 #include "third_party/blink/public/mojom/window_features/window_features.mojom.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/base/window_open_disposition.h"
-#include "ui/gfx/geometry/rect.h"
 #include "url/gurl.h"
 
 #if !BUILDFLAG(IS_ANDROID)
@@ -39,6 +39,7 @@
 #endif
 
 class Browser;
+class BrowserWindowInterface;
 class Profile;
 
 namespace content {
@@ -75,12 +76,25 @@ struct NavigateParams {
   explicit NavigateParams(
       std::unique_ptr<content::WebContents> contents_to_insert);
 #else
+  // TODO(http://crbug.com/443062679): Delete these.
   NavigateParams(Browser* browser,
                  const GURL& a_url,
                  ui::PageTransition a_transition);
+
+  // TODO(http://crbug.com/443062679): Delete this.
   NavigateParams(Browser* browser,
                  std::unique_ptr<content::WebContents> contents_to_insert);
 #endif
+
+#if !BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_DESKTOP_ANDROID)
+  // TODO(http://crbug.com/443062679): Unused in WML's Navigate().
+  NavigateParams(BrowserWindowInterface* a_bwi,
+                 const GURL& a_url,
+                 ui::PageTransition a_transition);
+  NavigateParams(BrowserWindowInterface* a_bwi,
+                 std::unique_ptr<content::WebContents> contents_to_insert);
+#endif
+
   NavigateParams(Profile* profile,
                  const GURL& a_url,
                  ui::PageTransition a_transition);
@@ -235,11 +249,21 @@ struct NavigateParams {
       captive_portal::CaptivePortalWindowType::kNone;
 
   // Whether the browser popup is being created as a tab modal. If true,
-  // `disposition` should be NEW_POPUP.
-  bool is_tab_modal_popup = false;
+  // `disposition` should be NEW_POPUP. Additionally, it prevents card saving
+  // and other prompts for payments autofill enrollment.
+  bool is_tab_modal_popup_deprecated = false;
 
-  // If false then the navigation was not initiated by a user gesture.
+  // If false then the navigation was not initiated by a user gesture. This
+  // variable will be set to true for popups to get windows focus even if
+  // the navigation was not triggered by user gesture.
   bool user_gesture = true;
+
+  // Whether the navigation was initiated by a user gesture. Unlike
+  // `user_gesture`, this value will not change during the course of the
+  // navigation.
+  // TODO(https://crbug.com/394614633): remove this once the user gesture hack
+  // is fixed.
+  bool original_user_gesture = true;
 
   // What to do with the path component of the URL for singleton navigations.
   enum PathBehavior {
@@ -250,19 +274,33 @@ struct NavigateParams {
   };
   PathBehavior path_behavior = RESPECT;
 
+#if !BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_DESKTOP_ANDROID)
+  // [in]  Specifies a BrowserWindowInterface object where the navigation
+  //       could occur or the tab could be added. Navigate() is not obliged to
+  //       use this BrowserWindowInterface if it is not compatible with the
+  //       operation being performed. This can be NULL, in which case
+  //       |initiating_profile| must be provided.
+  // [out] Specifies the BrowserWindowInterface object where the navigation
+  //       occurred or the tab was added. Guaranteed non-NULL unless the
+  //       disposition did not require a navigation, in which case this is set
+  //       to NULL (SAVE_TO_DISK, IGNORE_ACTION).
+  // Note: If |show_window| is set to false and a new BrowserWindowInterface is
+  //       created by Navigate(), the caller is responsible for showing it so
+  //       that its window can assume responsibility for the Browser's lifetime
+  //       (Browser objects are deleted when the user closes a visible browser
+  //       window).
+  // Note: (crbug.com/443062679) When possible, prefer this over browser.
+  raw_ptr<BrowserWindowInterface> browser_window_interface = nullptr;
+#endif
+
 #if !BUILDFLAG(IS_ANDROID)
-  // [in]  Specifies a Browser object where the navigation could occur or the
-  //       tab could be added. Navigate() is not obliged to use this Browser if
-  //       it is not compatible with the operation being performed. This can be
-  //       NULL, in which case |initiating_profile| must be provided.
-  // [out] Specifies the Browser object where the navigation occurred or the
-  //       tab was added. Guaranteed non-NULL unless the disposition did not
-  //       require a navigation, in which case this is set to NULL
-  //       (SAVE_TO_DISK, IGNORE_ACTION).
-  // Note: If |show_window| is set to false and a new Browser is created by
-  //       Navigate(), the caller is responsible for showing it so that its
-  //       window can assume responsibility for the Browser's lifetime (Browser
-  //       objects are deleted when the user closes a visible browser window).
+  // The BrowserWindowInterface on non-Android platforms.
+  // Please see the |browser_window_interface| field for documentation.
+  //
+  // Note: Please don't use this if you can use |browser_window_interface|.
+  //       Many usages are not yet supported, this is a WIP.
+  //
+  // TODO(http://crbug.com/443062679): Delete this.
   raw_ptr<Browser, AcrossTasksDanglingUntriaged> browser = nullptr;
 
   // The group the caller would like the tab to be added to.
@@ -307,13 +345,9 @@ struct NavigateParams {
   // Optional URLLoaderFactory to facilitate blob URL loading.
   scoped_refptr<network::SharedURLLoaderFactory> blob_url_loader_factory;
 
-  // Indicates that the navigation should happen in an pwa window if
-  // possible, i.e. if the is a PWA installed for the target URL.
-  bool open_pwa_window_if_possible = false;
-
-  // Indicates that the navigation must happen in a PWA window. If a PWA
-  // window can't be created, the navigation will be cancelled.
-  bool force_open_pwa_window = false;
+  // Indicates that this is a service worker openWindow() call targeting a new
+  // window.
+  bool is_service_worker_open_window = false;
 
   // The time when the input which led to the navigation occurred. Currently
   // only set when a link is clicked or the navigation takes place from the
@@ -361,7 +395,9 @@ struct NavigateParams {
   // This option forces PWA navigation capturing (which captures some
   // navigations into PWA windows or tabs) off. This is only recommended to be
   // used if the navigation MUST not be captured. See
-  // https://bit.ly/pwa-navigation-capturing.
+  // https://bit.ly/pwa-navigation-capturing for a description about what PWA
+  // navigation capturing does. Setting this field to `true` will disable all of
+  // the behaviors listed in that document.
   bool pwa_navigation_capturing_force_off = false;
 
  private:

@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/342213636): Remove this and spanify to fix the errors.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "content/browser/gpu/gpu_internals_ui.h"
 
 #include <stddef.h>
@@ -24,6 +19,7 @@
 #include "base/i18n/time_formatting.h"
 #include "base/memory/raw_ref.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringize_macros.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -49,6 +45,7 @@
 #include "gpu/config/gpu_feature_type.h"
 #include "gpu/config/gpu_info.h"
 #include "gpu/config/gpu_lists_version.h"
+#include "gpu/config/gpu_preferences.h"
 #include "gpu/config/gpu_util.h"
 #include "gpu/ipc/common/gpu_memory_buffer_support.h"
 #include "services/network/public/mojom/content_security_policy.mojom.h"
@@ -65,6 +62,7 @@
 #include "ui/gl/gpu_switching_manager.h"
 
 #if BUILDFLAG(IS_WIN)
+#include "base/win/windows_version.h"
 #include "ui/gfx/win/physical_size.h"
 #endif
 
@@ -86,7 +84,7 @@ void CreateAndAddGpuHTMLSource(BrowserContext* browser_context) {
       "trusted-types static-types;");
 
   source->UseStringsJs();
-  source->AddResourcePaths(base::make_span(kGpuResources, kGpuResourcesSize));
+  source->AddResourcePaths(kGpuResources);
   source->AddResourcePath("", IDR_GPU_GPU_INTERNALS_HTML);
 }
 
@@ -129,6 +127,9 @@ base::Value::List GetBasicGpuInfo(const gpu::GPUInfo& gpu_info,
       base::NumberToString(gpu_info.initialization_time.InMilliseconds())));
   basic_info.Append(display::BuildGpuInfoEntry(
       "In-process GPU", base::Value(gpu_info.in_process_gpu)));
+  basic_info.Append(display::BuildGpuInfoEntry(
+      "Skia Backend",
+      gpu::SkiaBackendTypeToString(gpu_info.skia_backend_type)));
   basic_info.Append(display::BuildGpuInfoEntry(
       "Passthrough Command Decoder",
       base::Value(gpu_info.passthrough_cmd_decoder)));
@@ -241,7 +242,7 @@ base::Value::List GetBasicGpuInfo(const gpu::GPUInfo& gpu_info,
 
   {
     base::Value::List gpu_extra_info_values =
-        display::Screen::GetScreen()->GetGpuExtraInfo(gpu_extra_info);
+        display::Screen::Get()->GetGpuExtraInfo(gpu_extra_info);
     for (auto& pair : gpu_extra_info_values) {
       if (!pair.GetDict().FindString("description") ||
           !pair.GetDict().contains("value")) {
@@ -309,7 +310,7 @@ base::Value::Dict GetGpuInfo() {
 
 #if BUILDFLAG(ENABLE_VULKAN)
   if (gpu_info.vulkan_info) {
-    auto blob = gpu_info.vulkan_info->Serialize();
+    auto blob = gpu_info.SerializeVulkanInfo();
     info.Set("vulkanInfo", base::Base64Encode(blob));
   }
 #endif
@@ -373,7 +374,7 @@ base::Value::List GpuMemoryBufferInfo(const gfx::GpuExtraInfo& gpu_extra_info) {
 base::Value::List GetDisplayInfo() {
   base::Value::List display_info;
   const std::vector<display::Display> displays =
-      display::Screen::GetScreen()->GetAllDisplays();
+      display::Screen::Get()->GetAllDisplays();
   for (const auto& display : displays) {
     display_info.Append(
         display::BuildGpuInfoEntry("Info ", display.ToString()));
@@ -712,9 +713,6 @@ class GpuMessageHandler
   // GpuDataManagerObserver implementation.
   void OnGpuInfoUpdate() override;
 
-  // ui::GpuSwitchingObserver implementation.
-  void OnGpuSwitched(gl::GpuPreference) override;
-
   // Messages
   void HandleGetGpuInfo(const base::Value::List& list);
   void HandleGetClientInfo(const base::Value::List& list);
@@ -756,11 +754,9 @@ void GpuMessageHandler::RegisterMessages() {
 
 void GpuMessageHandler::OnJavascriptAllowed() {
   GpuDataManagerImpl::GetInstance()->AddObserver(this);
-  ui::GpuSwitchingManager::GetInstance()->AddObserver(this);
 }
 
 void GpuMessageHandler::OnJavascriptDisallowed() {
-  ui::GpuSwitchingManager::GetInstance()->RemoveObserver(this);
   GpuDataManagerImpl::GetInstance()->RemoveObserver(this);
 }
 
@@ -808,8 +804,28 @@ base::Value::Dict GpuMessageHandler::GetClientInfo() {
 #else
   dict.Set("command_line", command_line);
 #endif
+#if BUILDFLAG(IS_WIN)
+  const base::win::OSInfo& os_info = *base::win::OSInfo::GetInstance();
+  const base::win::OSInfo::VersionNumber os_version = os_info.version_number();
+  base::win::OSInfo::VersionNumber kernel32_version =
+      os_info.Kernel32VersionNumber();
+  dict.Set(
+      "operating_system",
+      base::StringPrintf("%s %u.%u.%u.%u (kernel32 %u.%u.%u.%u)",
+                         base::SysInfo::OperatingSystemName(), os_version.major,
+                         os_version.minor, os_version.build, os_version.patch,
+                         kernel32_version.major, kernel32_version.minor,
+                         kernel32_version.build, kernel32_version.patch));
+#elif BUILDFLAG(IS_ANDROID)
+  dict.Set("operating_system",
+           base::StringPrintf("%s %s %s", base::SysInfo::OperatingSystemName(),
+                              base::SysInfo::OperatingSystemVersion(),
+                              base::SysInfo::GetAndroidBuildID()));
+
+#else
   dict.Set("operating_system", base::SysInfo::OperatingSystemName() + " " +
                                    base::SysInfo::OperatingSystemVersion());
+#endif
   dict.Set("angle_commit_id", angle::GetANGLECommitHash());
   dict.Set("graphics_backend",
            std::string("Skia/" STRINGIZE(SK_MILESTONE) " " SKIA_COMMIT_HASH));
@@ -878,11 +894,6 @@ base::Value::Dict GpuMessageHandler::GetGpuInfoDict() {
 
 void GpuMessageHandler::OnGpuInfoUpdate() {
   FireWebUIListener("gpu-info-updated", GetGpuInfoDict());
-}
-
-void GpuMessageHandler::OnGpuSwitched(gl::GpuPreference active_gpu_heuristic) {
-  // Currently, about:gpu page does not update GPU info after the GPU switch.
-  // If there is something to be updated, the code should be added here.
 }
 
 }  // namespace

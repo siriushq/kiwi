@@ -30,7 +30,10 @@
 #include "base/threading/thread_restrictions.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/apps/platform_apps/app_browsertest_util.h"
+#include "chrome/browser/bookmarks/bookmark_merged_surface_service.h"
+#include "chrome/browser/bookmarks/bookmark_merged_surface_service_factory.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
+#include "chrome/browser/bookmarks/bookmark_test_helpers.h"
 #include "chrome/browser/browser_features.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/first_run/first_run.h"
@@ -54,6 +57,7 @@
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/cocoa/bookmarks/bookmark_menu_bridge.h"
 #include "chrome/browser/ui/cocoa/history_menu_bridge.h"
 #include "chrome/browser/ui/cocoa/test/run_loop_testing.h"
@@ -65,7 +69,6 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/common/chrome_constants.h"
-#include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
@@ -74,7 +77,6 @@
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/account_id/account_id.h"
 #include "components/bookmarks/browser/bookmark_model.h"
-#include "components/bookmarks/test/bookmark_test_helpers.h"
 #include "components/policy/core/common/policy_pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "components/signin/public/base/signin_switches.h"
@@ -333,9 +335,8 @@ IN_PROC_BROWSER_TEST_F(AppControllerWebAppBrowserTest,
   EXPECT_FALSE(result);
   EXPECT_EQ(2u, active_browser_list_->size());
 
-  Browser* browser = active_browser_list_->get(0);
   GURL current_url =
-      browser->tab_strip_model()->GetActiveWebContents()->GetURL();
+      browser()->GetTabStripModel()->GetActiveWebContents()->GetURL();
   EXPECT_EQ(GetAppURL(), current_url.spec());
 }
 
@@ -503,8 +504,7 @@ IN_PROC_BROWSER_TEST_F(AppControllerProfilePickerBrowserTest,
   entry->LockForceSigninProfile(true);
   EXPECT_TRUE(entry->IsSigninRequired());
   EXPECT_EQ(1u, active_browser_list()->size());
-  Browser* browser = active_browser_list()->get(0);
-  EXPECT_FALSE(browser->profile()->IsGuestSession());
+  EXPECT_FALSE(browser()->GetProfile()->IsGuestSession());
   // "About Chrome" is not available in the menu.
   NSMenu* chrome_submenu =
       [[NSApp.mainMenu itemWithTag:IDC_CHROME_MENU] submenu];
@@ -592,12 +592,11 @@ IN_PROC_BROWSER_TEST_F(AppControllerProfilePickerBrowserTest, MenuCommands) {
   EXPECT_TRUE([app_controller validateUserInterfaceItem:new_window_menu_item]);
 
   // Activate the item and check that a new browser is opened.
-  ui_test_utils::BrowserChangeObserver browser_added_observer(
-      nullptr, ui_test_utils::BrowserChangeObserver::ChangeType::kAdded);
+  ui_test_utils::BrowserCreatedObserver browser_created_observer;
   [file_submenu
       performActionForItemAtIndex:[file_submenu
                                       indexOfItem:new_window_menu_item]];
-  EXPECT_TRUE(browser_added_observer.Wait());
+  EXPECT_TRUE(browser_created_observer.Wait());
 }
 
 class AppControllerFirstRunBrowserTest : public AppControllerBrowserTest {
@@ -943,14 +942,7 @@ IN_PROC_BROWSER_TEST_F(AppControllerBrowserTest,
                         ->GetLastCommittedURL());
 }
 
-class AppControllerShortcutsNotAppsBrowserTest : public InProcessBrowserTest {
- protected:
-  AppControllerShortcutsNotAppsBrowserTest() {
-    features_.InitAndEnableFeature(features::kShortcutsNotApps);
-  }
-
-  base::test::ScopedFeatureList features_;
-};
+using AppControllerShortcutsNotAppsBrowserTest = InProcessBrowserTest;
 
 IN_PROC_BROWSER_TEST_F(AppControllerShortcutsNotAppsBrowserTest,
                        OpenChromeWeblocFile) {
@@ -1199,8 +1191,8 @@ IN_PROC_BROWSER_TEST_F(AppControllerMainMenuBrowserTest,
 
   // Use the existing profile as profile 1.
   Profile* profile1 = browser()->profile();
-  bookmarks::test::WaitForBookmarkModelToLoad(
-      BookmarkModelFactory::GetForBrowserContext(profile1));
+  WaitForBookmarkMergedSurfaceServiceToLoad(
+      BookmarkMergedSurfaceServiceFactory::GetForProfile(profile1));
 
   // Create profile 2.
   base::ScopedAllowBlockingForTesting allow_blocking;
@@ -1209,14 +1201,14 @@ IN_PROC_BROWSER_TEST_F(AppControllerMainMenuBrowserTest,
       Profile::CreateProfile(path2, nullptr, Profile::CreateMode::kSynchronous);
   Profile* profile2_ptr = profile2.get();
   profile_manager->RegisterTestingProfile(std::move(profile2), false);
-  bookmarks::test::WaitForBookmarkModelToLoad(
-      BookmarkModelFactory::GetForBrowserContext(profile2_ptr));
+  WaitForBookmarkMergedSurfaceServiceToLoad(
+      BookmarkMergedSurfaceServiceFactory::GetForProfile(profile2_ptr));
 
   // Switch to profile 1, create bookmark 1 and force the menu to build.
   [app_controller setLastProfile:profile1];
-  [app_controller bookmarkMenuBridge]->GetBookmarkModel()
-      -> AddURL([app_controller bookmarkMenuBridge]->GetBookmarkModel()
-                    -> bookmark_bar_node(),
+  [app_controller bookmarkMenuBridge]->GetBookmarkModelForTesting()
+      -> AddURL([app_controller bookmarkMenuBridge]
+                    ->GetBookmarkModelForTesting() -> bookmark_bar_node(),
                 0, title1, url1);
   NSMenu* profile1_submenu =
       [app_controller bookmarkMenuBridge]->BookmarkMenu();
@@ -1224,9 +1216,9 @@ IN_PROC_BROWSER_TEST_F(AppControllerMainMenuBrowserTest,
 
   // Switch to profile 2, create bookmark 2 and force the menu to build.
   [app_controller setLastProfile:profile2_ptr];
-  [app_controller bookmarkMenuBridge]->GetBookmarkModel()
-      -> AddURL([app_controller bookmarkMenuBridge]->GetBookmarkModel()
-                    -> bookmark_bar_node(),
+  [app_controller bookmarkMenuBridge]->GetBookmarkModelForTesting()
+      -> AddURL([app_controller bookmarkMenuBridge]
+                    ->GetBookmarkModelForTesting() -> bookmark_bar_node(),
                 0, title2, url2);
   NSMenu* profile2_submenu =
       [app_controller bookmarkMenuBridge]->BookmarkMenu();
@@ -1267,8 +1259,7 @@ IN_PROC_BROWSER_TEST_F(AppControllerMainMenuBrowserTest,
   IncognitoModePrefs::SetAvailability(
       profile->GetPrefs(), policy::IncognitoModeAvailability::kForced);
   // Simulate click on "New window".
-  ui_test_utils::BrowserChangeObserver browser_added_observer(
-      nullptr, ui_test_utils::BrowserChangeObserver::ChangeType::kAdded);
+  ui_test_utils::BrowserCreatedObserver browser_created_observer;
   AppController* app_controller = AppController.sharedController;
   NSMenu* menu = [app_controller applicationDockMenu:NSApp];
   ASSERT_TRUE(menu);
@@ -1276,7 +1267,7 @@ IN_PROC_BROWSER_TEST_F(AppControllerMainMenuBrowserTest,
   ASSERT_TRUE(item);
   [app_controller commandDispatch:item];
   // Check that a new incognito browser is opened.
-  Browser* new_browser = browser_added_observer.Wait();
+  Browser* new_browser = browser_created_observer.Wait();
   EXPECT_EQ(BrowserList::GetInstance()->size(), 1u);
   EXPECT_TRUE(new_browser->profile()->IsPrimaryOTRProfile());
   EXPECT_EQ(profile, new_browser->profile()->GetOriginalProfile());
@@ -1364,9 +1355,12 @@ IN_PROC_BROWSER_TEST_F(AppControllerHandoffBrowserTest, TestHandoffURLs) {
 
   // Test that opening a new browser window updates the handoff URL.
   GURL test_url3 = embedded_test_server()->GetURL("/title3.html");
+  auto browser_created_observer =
+      std::make_optional<ui_test_utils::BrowserCreatedObserver>();
   ui_test_utils::NavigateToURLWithDisposition(
       browser(), GURL(test_url3), WindowOpenDisposition::NEW_WINDOW,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
+  Browser* const browser2 = browser_created_observer->Wait();
   EXPECT_EQ(g_handoff_url, test_url3);
   EXPECT_EQ(g_handoff_title, u"Title Of More Awesomeness");
 
@@ -1375,22 +1369,22 @@ IN_PROC_BROWSER_TEST_F(AppControllerHandoffBrowserTest, TestHandoffURLs) {
   EXPECT_EQ(2u, active_browser_list->size());
 
   // Close the second browser window (which only has 1 tab left).
-  Browser* browser2 = active_browser_list->get(1);
   CloseBrowserSynchronously(browser2);
   EXPECT_EQ(g_handoff_url, test_url2);
   EXPECT_EQ(g_handoff_title, u"Title Of Awesomeness");
 
   // The URLs of incognito windows should not be passed to Handoff.
   GURL test_url4 = embedded_test_server()->GetURL("/simple.html");
+  browser_created_observer.emplace();
   ui_test_utils::NavigateToURLWithDisposition(
       browser(), GURL(test_url4), WindowOpenDisposition::OFF_THE_RECORD,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_BROWSER);
+  Browser* const browser3 = browser_created_observer->Wait();
   EXPECT_EQ(g_handoff_url, GURL());
   EXPECT_EQ(g_handoff_title, u"");
 
   // Open a new tab in the incognito window.
   EXPECT_EQ(2u, active_browser_list->size());
-  Browser* browser3 = active_browser_list->get(1);
   ui_test_utils::NavigateToURLWithDisposition(
       browser3, test_url4, WindowOpenDisposition::NEW_FOREGROUND_TAB,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_TAB);
@@ -1403,8 +1397,7 @@ IN_PROC_BROWSER_TEST_F(AppControllerHandoffBrowserTest, TestHandoffURLs) {
   EXPECT_EQ(g_handoff_title, u"");
 
   // Activate the original browser window.
-  Browser* browser1 = active_browser_list->get(0);
-  browser1->window()->Show();
+  browser()->window()->Show();
   EXPECT_EQ(g_handoff_url, test_url2);
   EXPECT_EQ(g_handoff_title, u"Title Of Awesomeness");
 }

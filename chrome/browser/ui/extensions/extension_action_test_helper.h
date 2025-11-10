@@ -11,7 +11,7 @@
 #include <string>
 
 #include "extensions/common/extension_id.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_ui_types.h"
 
 class Browser;
 
@@ -31,7 +31,7 @@ class ExtensionActionTestHelper {
   ExtensionActionTestHelper& operator=(const ExtensionActionTestHelper&) =
       delete;
 
-  virtual ~ExtensionActionTestHelper() {}
+  virtual ~ExtensionActionTestHelper() = default;
 
   // Returns the number of browser action buttons in the window toolbar.
   virtual int NumberOfBrowserActions() = 0;
@@ -77,7 +77,7 @@ class ExtensionActionTestHelper {
       const extensions::ExtensionId& id) = 0;
 
  protected:
-  ExtensionActionTestHelper() {}
+  ExtensionActionTestHelper() = default;
 };
 
 #endif  // CHROME_BROWSER_UI_EXTENSIONS_EXTENSION_ACTION_TEST_HELPER_H_

@@ -8,8 +8,11 @@
 #include <string>
 #include <vector>
 
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/manifest.h"
 #include "extensions/common/permissions/permission_message.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 
@@ -18,6 +21,8 @@ class PermissionSet;
 struct InstallPromptPermissions {
   InstallPromptPermissions();
   ~InstallPromptPermissions();
+  InstallPromptPermissions(const InstallPromptPermissions&);
+  InstallPromptPermissions& operator=(const InstallPromptPermissions&);
 
   void LoadFromPermissionSet(const extensions::PermissionSet* permissions_set,
                              extensions::Manifest::Type type);

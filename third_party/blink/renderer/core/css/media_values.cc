@@ -15,10 +15,11 @@
 #include "third_party/blink/renderer/core/css_value_keywords.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
+#include "third_party/blink/renderer/core/frame/screen.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/layout/adjust_for_absolute_zoom.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
@@ -165,6 +166,12 @@ double MediaValues::CalculateDynamicViewportHeight(LocalFrame* frame) {
 
 int MediaValues::CalculateDeviceWidth(LocalFrame* frame) {
   DCHECK(frame && frame->View() && frame->GetSettings() && frame->GetPage());
+
+  if (frame->DomWindow() &&
+      frame->DomWindow()->screen()->ShouldReduceScreenSize()) {
+    return CalculateViewportWidth(frame);
+  }
+
   const display::ScreenInfo& screen_info =
       frame->GetPage()->GetChromeClient().GetScreenInfo(*frame);
   int device_width = screen_info.rect.width();
@@ -177,6 +184,12 @@ int MediaValues::CalculateDeviceWidth(LocalFrame* frame) {
 
 int MediaValues::CalculateDeviceHeight(LocalFrame* frame) {
   DCHECK(frame && frame->View() && frame->GetSettings() && frame->GetPage());
+
+  if (frame->DomWindow() &&
+      frame->DomWindow()->screen()->ShouldReduceScreenSize()) {
+    return CalculateViewportHeight(frame);
+  }
+
   const display::ScreenInfo& screen_info =
       frame->GetPage()->GetChromeClient().GetScreenInfo(*frame);
   int device_height = screen_info.rect.height();
@@ -390,8 +403,13 @@ ColorSpaceGamut MediaValues::CalculateColorGamut(LocalFrame* frame) {
       frame->GetPage()->GetMediaFeatureOverrides();
   std::optional<ColorSpaceGamut> override_value =
       overrides ? overrides->GetColorGamut() : std::nullopt;
-  return override_value.value_or(color_space_utilities::GetColorSpaceGamut(
-      frame->GetPage()->GetChromeClient().GetScreenInfo(*frame)));
+  ColorSpaceGamut actual = color_space_utilities::GetColorSpaceGamut(
+      frame->GetPage()->GetChromeClient().GetScreenInfo(*frame));
+  if (frame->DomWindow() &&
+      frame->DomWindow()->screen()->ShouldReduceScreenSize()) {
+    actual = ColorSpaceGamut::SRGB;
+  }
+  return override_value.value_or(actual);
 }
 
 mojom::blink::PreferredColorScheme MediaValues::CalculatePreferredColorScheme(
@@ -522,9 +540,9 @@ int MediaValues::CalculateHorizontalViewportSegments(LocalFrame* frame) {
     return 1;
   }
 
-  WebVector<gfx::Rect> viewport_segments =
+  std::vector<gfx::Rect> viewport_segments =
       frame->GetWidgetForLocalRoot()->ViewportSegments();
-  WTF::HashSet<int> unique_x;
+  HashSet<int> unique_x;
   for (const auto& segment : viewport_segments) {
     // HashSet can't have 0 as a key, so add 1 to all the values we see.
     unique_x.insert(segment.x() + 1);
@@ -538,9 +556,9 @@ int MediaValues::CalculateVerticalViewportSegments(LocalFrame* frame) {
     return 1;
   }
 
-  WebVector<gfx::Rect> viewport_segments =
+  std::vector<gfx::Rect> viewport_segments =
       frame->GetWidgetForLocalRoot()->ViewportSegments();
-  WTF::HashSet<int> unique_y;
+  HashSet<int> unique_y;
   for (const auto& segment : viewport_segments) {
     // HashSet can't have 0 as a key, so add 1 to all the values we see.
     unique_y.insert(segment.y() + 1);

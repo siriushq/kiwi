@@ -20,7 +20,6 @@
 #include "base/threading/scoped_blocking_call.h"
 #include "build/branding_buildflags.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/policy/policy_path_parser.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
@@ -28,8 +27,9 @@
 #include "components/version_info/version_info.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/common/content_switches.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "ash/constants/ash_switches.h"
 #endif
 
@@ -128,6 +128,13 @@ base::CommandLine CommandLineArgsForLauncher(
   // during launch.
   if (!extension_app_id.empty()) {
     new_cmd_line.AppendSwitchASCII(switches::kAppId, extension_app_id);
+    // Add --enable-automation switch to support app launches against a browser
+    // process already running with --enable-automation. If not present, app
+    // launches will fail as process hand-off is prohibited in automation mode.
+    if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+            switches::kEnableAutomation)) {
+      new_cmd_line.AppendSwitch(switches::kEnableAutomation);
+    }
   } else {
     // Use '--app=url' instead of just 'url' to launch the browser with minimal
     // chrome.
@@ -176,7 +183,7 @@ void AppendProfileArgs(const base::FilePath& profile_path,
       command_line->AppendSwitchPath(switches::kUserDataDir, user_data_dir);
   }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   base::FilePath profile =
       cmd_line.GetSwitchValuePath(ash::switches::kLoginProfile);
   if (!profile.empty())

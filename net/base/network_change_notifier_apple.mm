@@ -26,7 +26,7 @@
 #include "net/dns/dns_config_service.h"
 #include "net/log/net_log.h"
 
-#if BUILDFLAG(IS_IOS)
+#if BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_IOS_TVOS)
 #import <CoreTelephony/CTTelephonyNetworkInfo.h>
 #endif
 
@@ -241,7 +241,7 @@ NetworkChangeNotifierApple::CalculateConnectionType(
   if (!reachable)
     return CONNECTION_NONE;
 
-#if BUILDFLAG(IS_IOS)
+#if BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_IOS_TVOS)
   if (!(flags & kSCNetworkReachabilityFlagsIsWWAN)) {
     return CONNECTION_WIFI;
   }
@@ -263,7 +263,7 @@ NetworkChangeNotifierApple::CalculateConnectionType(
                               CTRadioAccessTechnologyeHRPD, nil];
     NSSet<NSString*>* technologies_4g =
         [NSSet setWithObjects:CTRadioAccessTechnologyLTE, nil];
-    // TODO: Use constants from CoreTelephony once Cronet builds with XCode 12.1
+    // TODO: Use constants from CoreTelephony once Cronet builds with Xcode 12.1
     NSSet<NSString*>* technologies_5g =
         [NSSet setWithObjects:@"CTRadioAccessTechnologyNRNSA",
                               @"CTRadioAccessTechnologyNR", nil];

@@ -4,22 +4,27 @@
 
 package org.chromium.chrome.browser.tab;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.content_public.browser.LoadUrlParams;
+import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_public.common.Referrer;
 
-import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.Map;
 
 /** Extracts a {@link TabState} from a {@link Tab}. */
+@NullMarked
 public class TabStateExtractor {
-    private static Map<Integer, TabState> sTabStatesForTesting;
+    private static @Nullable Map<Integer, TabState> sTabStatesForTesting;
 
     /**
      * Returns an opaque "state" object that can be persisted to storage.
+     *
      * @param tab The {@link Tab} from which to extract the state.
-     **/
-    public static TabState from(Tab tab) {
+     * @return The state object, or null if the tab is not initialized.
+     */
+    public static @Nullable TabState from(Tab tab) {
         if (sTabStatesForTesting != null && sTabStatesForTesting.containsKey(tab.getId())) {
             return sTabStatesForTesting.get(tab.getId());
         }
@@ -43,43 +48,43 @@ public class TabStateExtractor {
                 tab.getLastNavigationCommittedTimestampMillis();
         tabState.tabGroupId = tab.getTabGroupId();
         tabState.tabHasSensitiveContent = tab.getTabHasSensitiveContent();
+        tabState.isPinned = tab.getIsPinned();
         return tabState;
     }
 
     /**
      * Returns an object representing the state of the Tab's WebContents.
+     *
      * @param tab The {@link Tab} from which to extract the WebContents state.
-     **/
-    public static WebContentsState getWebContentsState(Tab tab) {
+     * @return The web contents state object, or null if the native call returns null (e.g.
+     *     out-of-memory).
+     */
+    public static @Nullable WebContentsState getWebContentsState(Tab tab) {
+        // The tab is still frozen we can just use the existing state.
         if (tab.getWebContentsState() != null) {
             return tab.getWebContentsState();
         }
 
-        // Native call returns null when buffer allocation needed to serialize the state failed.
-        ByteBuffer buffer = getWebContentsStateAsByteBuffer(tab);
-        if (buffer == null) return null;
-
-        WebContentsState state = new WebContentsState(buffer);
-        state.setVersion(WebContentsState.CONTENTS_STATE_CURRENT_VERSION);
-        return state;
-    }
-
-    /** Returns an ByteBuffer representing the state of the Tab's WebContents. */
-    private static ByteBuffer getWebContentsStateAsByteBuffer(Tab tab) {
+        // The tab is not frozen we need to create a new state. This may be null if buffer
+        // allocation fails.
         LoadUrlParams pendingLoadParams = tab.getPendingLoadParams();
         if (pendingLoadParams == null) {
-            return WebContentsStateBridge.getContentsStateAsByteBuffer(tab.getWebContents());
-        } else {
-            Referrer referrer = pendingLoadParams.getReferrer();
-            return WebContentsStateBridge.createSingleNavigationStateAsByteBuffer(
-                    tab.getTitle(),
-                    pendingLoadParams.getUrl(),
-                    referrer != null ? referrer.getUrl() : null,
-                    // Policy will be ignored for null referrer url, 0 is just a placeholder.
-                    referrer != null ? referrer.getPolicy() : 0,
-                    pendingLoadParams.getInitiatorOrigin(),
-                    tab.isIncognito());
+            WebContents webContents = tab.getWebContents();
+            assert webContents != null;
+            return WebContentsState.getWebContentsStateFromWebContents(webContents);
         }
+
+        // The tab has a pending load and no WebContents or WebContentsState, we need to create a
+        // new state for the pending load.
+        Referrer referrer = pendingLoadParams.getReferrer();
+        return WebContentsState.createSingleNavigationWebContentsState(
+                tab.getProfile(),
+                tab.getTitle(),
+                pendingLoadParams.getUrl(),
+                referrer != null ? referrer.getUrl() : null,
+                // Policy will be ignored for null referrer url, 0 is just a placeholder.
+                referrer != null ? referrer.getPolicy() : 0,
+                pendingLoadParams.getInitiatorOrigin());
     }
 
     public static void setTabStateForTesting(int tabId, TabState tabState) {

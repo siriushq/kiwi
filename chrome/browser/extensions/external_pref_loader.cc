@@ -4,6 +4,7 @@
 
 #include "chrome/browser/extensions/external_pref_loader.h"
 
+#include <algorithm>
 #include <set>
 #include <utility>
 
@@ -18,7 +19,6 @@
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/path_service.h"
-#include "base/ranges/algorithm.h"
 #include "base/scoped_observation.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -31,6 +31,7 @@
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "extensions/browser/extension_file_task_runner.h"
+#include "extensions/buildflags/buildflags.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
 #include "ash/constants/ash_features.h"
@@ -45,6 +46,8 @@
 #include "components/sync_preferences/pref_service_syncable.h"
 #include "components/sync_preferences/pref_service_syncable_observer.h"
 #endif
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 using content::BrowserThread;
 
@@ -217,8 +220,7 @@ ExternalPrefLoader::ExternalPrefLoader(int base_path_id,
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 }
 
-ExternalPrefLoader::~ExternalPrefLoader() {
-}
+ExternalPrefLoader::~ExternalPrefLoader() = default;
 
 const base::FilePath ExternalPrefLoader::GetBaseCrxFilePath() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -250,8 +252,8 @@ void ExternalPrefLoader::OnPrioritySyncReady(
     ExternalPrefLoader::PrioritySyncReadyWaiter* waiter) {
   // Delete |waiter| from |pending_waiter_list_|.
   pending_waiter_list_.erase(
-      base::ranges::find(pending_waiter_list_, waiter,
-                         &std::unique_ptr<PrioritySyncReadyWaiter>::get));
+      std::ranges::find(pending_waiter_list_, waiter,
+                        &std::unique_ptr<PrioritySyncReadyWaiter>::get));
   // Continue loading.
   GetExtensionFileTaskRunner()->PostTask(
       FROM_HERE, base::BindOnce(&ExternalPrefLoader::LoadOnFileThread, this));

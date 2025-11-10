@@ -4,22 +4,25 @@
 
 package org.chromium.chrome.browser.omnibox;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Rect;
 import android.util.AttributeSet;
 import android.view.TouchDelegate;
 import android.view.View;
-import android.widget.FrameLayout;
 
 import org.chromium.base.TraceEvent;
+import org.chromium.build.annotations.NullMarked;
 
 /** A location bar implementation specific for smaller/phone screens. */
+@NullMarked
 class LocationBarPhone extends LocationBarLayout {
     private static final int ACTION_BUTTON_TOUCH_OVERFLOW_LEFT = 15;
 
+    @SuppressWarnings("HidingField")
     private View mUrlBar;
-    private View mStatusView;
 
     /** Constructor used to inflate from XML. */
     public LocationBarPhone(Context context, AttributeSet attrs) {
@@ -31,14 +34,13 @@ class LocationBarPhone extends LocationBarLayout {
         super.onFinishInflate();
 
         mUrlBar = findViewById(R.id.url_bar);
-        mStatusView = findViewById(R.id.location_bar_status);
 
         Rect delegateArea = new Rect();
         mUrlActionContainer.getHitRect(delegateArea);
         delegateArea.left -= ACTION_BUTTON_TOUCH_OVERFLOW_LEFT;
         TouchDelegate touchDelegate = new TouchDelegate(delegateArea, mUrlActionContainer);
         assert mUrlActionContainer.getParent() == this;
-        mCompositeTouchDelegate.addDelegateForDescendantView(touchDelegate);
+        assumeNonNull(mCompositeTouchDelegate).addDelegateForDescendantView(touchDelegate);
     }
 
     @Override
@@ -83,21 +85,17 @@ class LocationBarPhone extends LocationBarLayout {
     }
 
     /**
-     * Returns {@link FrameLayout.LayoutParams} of the LocationBar view.
+     * Returns {@link MarginLayoutParams} of the LocationBar view.
      *
      * <p>TODO(crbug.com/40151029): Hide this View interaction if possible.
      *
      * @see View#getLayoutParams()
      */
-    public FrameLayout.LayoutParams getFrameLayoutParams() {
-        return (FrameLayout.LayoutParams) getLayoutParams();
+    public MarginLayoutParams getMarginLayoutParams() {
+        return (MarginLayoutParams) getLayoutParams();
     }
 
     int getOffsetOfFirstVisibleFocusedView() {
-        if (mLocationBarDataProvider.isIncognito() && mStatusView.getVisibility() != View.GONE) {
-            return mStatusView.getMeasuredWidth();
-        }
-
         return 0;
     }
 }

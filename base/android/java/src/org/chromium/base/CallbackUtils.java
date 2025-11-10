@@ -4,7 +4,11 @@
 
 package org.chromium.base;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
+
 /** Utilities for interacting with {@link Callback}s. */
+@NullMarked
 public class CallbackUtils {
     /**
      * @see #emptyCallback() to avoid unchecked generic checks.
@@ -16,7 +20,7 @@ public class CallbackUtils {
 
     /** Returns a Singleton {@link Callback} to be used where you need no action to be taken. */
     @SuppressWarnings("unchecked")
-    public static <T> Callback<T> emptyCallback() {
+    public static <T extends @Nullable Object> Callback<T> emptyCallback() {
         return DO_NOTHING_CALLBACK;
     }
 

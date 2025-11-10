@@ -17,6 +17,10 @@
 #include "chrome/browser/ui/browser.h"
 #endif
 
+#if !BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_DESKTOP_ANDROID)
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"  // nogncheck
+#endif
+
 using content::GlobalRequestID;
 using content::NavigationController;
 using content::WebContents;
@@ -35,6 +39,18 @@ NavigateParams::NavigateParams(Browser* a_browser,
     : contents_to_insert(std::move(contents_to_insert)), browser(a_browser) {}
 #endif  // BUILDFLAG(IS_ANDROID)
 
+#if !BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_DESKTOP_ANDROID)
+NavigateParams::NavigateParams(BrowserWindowInterface* a_bwi,
+                               const GURL& a_url,
+                               ui::PageTransition a_transition)
+    : url(a_url), transition(a_transition), browser_window_interface(a_bwi) {}
+
+NavigateParams::NavigateParams(BrowserWindowInterface* a_bwi,
+                               std::unique_ptr<WebContents> contents_to_insert)
+    : contents_to_insert(std::move(contents_to_insert)),
+      browser_window_interface(a_bwi) {}
+#endif
+
 NavigateParams::NavigateParams(Profile* a_profile,
                                const GURL& a_url,
                                ui::PageTransition a_transition)
@@ -46,7 +62,7 @@ NavigateParams::NavigateParams(Profile* a_profile,
 
 NavigateParams::NavigateParams(NavigateParams&&) = default;
 
-NavigateParams::~NavigateParams() {}
+NavigateParams::~NavigateParams() = default;
 
 void NavigateParams::FillNavigateParamsFromOpenURLParams(
     const content::OpenURLParams& params) {
@@ -76,7 +92,7 @@ void NavigateParams::FillNavigateParamsFromOpenURLParams(
   this->should_replace_current_entry = params.should_replace_current_entry;
   this->post_data = params.post_data;
   this->started_from_context_menu = params.started_from_context_menu;
-  this->open_pwa_window_if_possible = params.open_app_window_if_possible;
+  this->is_service_worker_open_window = params.is_service_worker_open_window;
   this->user_gesture = params.user_gesture;
   this->blob_url_loader_factory = params.blob_url_loader_factory;
   this->href_translate = params.href_translate;

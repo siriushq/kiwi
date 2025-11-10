@@ -5,7 +5,6 @@
 import("//build/config/chromeos/ui_mode.gni")
 import("//build/config/features.gni")
 import("//components/guest_view/buildflags/buildflags.gni")
-import("//components/nacl/features.gni")
 import("//extensions/buildflags/buildflags.gni")
 import("//mojo/public/tools/bindings/mojom.gni")
 import("//testing/libfuzzer/fuzzer_test.gni")
@@ -67,6 +66,18 @@ source_set("constants_impl") {
   configs += [ "//build/config/compiler:wexit_time_destructors" ]
 }
 
+source_set("extension_features") {
+  sources = [
+    "extension_features.cc",
+    "extension_features.h",
+  ]
+  public_deps = [
+    "//base",
+    "//build:branding_buildflags",
+    "//extensions/buildflags",
+  ]
+}
+
 mojom("mojom") {
   # We don't want Blink variants of bindings to be generated.
   disable_variants = true
@@ -82,6 +93,7 @@ mojom("mojom") {
     "mojom/event_dispatcher.mojom",
     "mojom/event_router.mojom",
     "mojom/execution_world.mojom",
+    "mojom/extension_id.mojom",
     "mojom/extra_response_data.mojom",
     "mojom/feature_session_type.mojom",
     "mojom/frame.mojom",
@@ -89,6 +101,7 @@ mojom("mojom") {
     "mojom/injection_type.mojom",
     "mojom/keep_alive.mojom",
     "mojom/manifest.mojom",
+    "mojom/match_origin_as_fallback.mojom",
     "mojom/message_port.mojom",
     "mojom/permission_set.mojom",
     "mojom/renderer.mojom",
@@ -191,6 +204,23 @@ mojom("mojom") {
     {
       types = [
         {
+          mojom = "extensions.mojom.ExtensionId"
+          cpp = "::extensions::ExtensionId"
+        },
+      ]
+      traits_headers =
+          [ "//extensions/common/mojom/extension_id_mojom_traits.h" ]
+
+      traits_sources =
+          [ "//extensions/common/mojom/extension_id_mojom_traits.cc" ]
+      traits_public_deps = [
+        "//components/crx_file",
+        "//mojo/public/cpp/bindings",
+      ]
+    },
+    {
+      types = [
+        {
           mojom = "extensions.mojom.Message"
           cpp = "::extensions::Message"
           move_only = true
@@ -265,6 +295,8 @@ static_library("common") {
     "api/sockets/sockets_manifest_handler.h",
     "api/sockets/sockets_manifest_permission.cc",
     "api/sockets/sockets_manifest_permission.h",
+    "api/speech/tts_engine_manifest_handler.cc",
+    "api/speech/tts_engine_manifest_handler.h",
     "api/web_request/web_request_activity_log_constants.cc",
     "api/web_request/web_request_activity_log_constants.h",
     "command.cc",
@@ -292,8 +324,6 @@ static_library("common") {
     "extension.h",
     "extension_api.cc",
     "extension_api.h",
-    "extension_features.cc",
-    "extension_features.h",
     "extension_id.h",
     "extension_l10n_util.cc",
     "extension_l10n_util.h",
@@ -369,6 +399,8 @@ static_library("common") {
     "manifest_handlers/automation.h",
     "manifest_handlers/background_info.cc",
     "manifest_handlers/background_info.h",
+    "manifest_handlers/chrome_url_overrides_handler.cc",
+    "manifest_handlers/chrome_url_overrides_handler.h",
     "manifest_handlers/content_capabilities_handler.cc",
     "manifest_handlers/content_capabilities_handler.h",
     "manifest_handlers/content_scripts_handler.cc",
@@ -379,6 +411,8 @@ static_library("common") {
     "manifest_handlers/csp_info.h",
     "manifest_handlers/default_locale_handler.cc",
     "manifest_handlers/default_locale_handler.h",
+    "manifest_handlers/devtools_page_handler.cc",
+    "manifest_handlers/devtools_page_handler.h",
     "manifest_handlers/extension_action_handler.cc",
     "manifest_handlers/extension_action_handler.h",
     "manifest_handlers/externally_connectable.cc",
@@ -403,6 +437,8 @@ static_library("common") {
     "manifest_handlers/options_page_info.h",
     "manifest_handlers/permissions_parser.cc",
     "manifest_handlers/permissions_parser.h",
+    "manifest_handlers/protocol_handler_info.cc",
+    "manifest_handlers/protocol_handler_info.h",
     "manifest_handlers/replacement_apps.cc",
     "manifest_handlers/replacement_apps.h",
     "manifest_handlers/requirements_info.cc",
@@ -460,7 +496,6 @@ static_library("common") {
     "permissions/usb_device_permission_data.cc",
     "permissions/usb_device_permission_data.h",
     "process_context_data.h",
-    "script_constants.h",
     "stack_frame.cc",
     "stack_frame.h",
     "switches.cc",
@@ -473,6 +508,10 @@ static_library("common") {
     "url_pattern_set.h",
     "user_script.cc",
     "user_script.h",
+    "user_scripts_allowed_state.cc",
+    "user_scripts_allowed_state.h",
+    "user_scripts_availability.cc",
+    "user_scripts_availability.h",
     "utils/base_string.cc",
     "utils/base_string.h",
     "utils/content_script_utils.cc",
@@ -497,6 +536,7 @@ static_library("common") {
 
   public_deps = [
     ":common_constants",
+    ":extension_features",
     ":mojom",
     "//components/services/app_service",
     "//content/public/common",
@@ -515,7 +555,7 @@ static_library("common") {
     "//build:chromeos_buildflags",
     "//components/crash/core/common",
     "//components/crx_file",
-    "//components/nacl/common:buildflags",
+    "//components/custom_handlers",
     "//components/pdf/common:util",
     "//components/safe_browsing/core/common",
     "//components/safe_browsing/core/common/hashprefix_realtime:hash_realtime_utils",
@@ -525,12 +565,14 @@ static_library("common") {
     "//crypto",
     "//device/bluetooth",
     "//device/bluetooth/public/cpp",
+    "//extensions:extensions_resources",
     "//extensions/common/api",
     "//extensions/strings",
     "//net",
     "//services/device/public/cpp/usb",
     "//services/device/public/mojom:usb",
     "//services/network/public/mojom",
+    "//third_party/blink/public/common",
     "//third_party/boringssl",
     "//third_party/icu",
     "//third_party/re2",
@@ -544,24 +586,7 @@ static_library("common") {
     "//url",
   ]
 
-  if (enable_extensions) {
-    deps += [ "//extensions:extensions_resources" ]
-  }
-
-  if (enable_nacl) {
-    sources += [
-      "manifest_handlers/nacl_modules_handler.cc",
-      "manifest_handlers/nacl_modules_handler.h",
-    ]
-  }
-
   if (is_chromeos) {
-    sources += [
-      "manifest_handlers/action_handlers_handler.cc",
-      "manifest_handlers/action_handlers_handler.h",
-    ]
-  }
-  if (is_chromeos_ash) {
     sources += [
       "manifest_handlers/input_components_handler.cc",
       "manifest_handlers/input_components_handler.h",
@@ -620,6 +645,7 @@ source_set("unit_tests") {
     "api/printer_provider/usb_printer_manifest_unittest.cc",
     "api/scripts_internal/script_serialization_unittest.cc",
     "api/sockets/sockets_manifest_permission_unittest.cc",
+    "api/speech/tts_engine_manifest_unittest.cc",
     "command_unittest.cc",
     "component_extension_url_pattern_unittest.cc",
     "crash_keys_unittest.cc",
@@ -643,9 +669,11 @@ source_set("unit_tests") {
     "image_util_unittest.cc",
     "manifest_handler_perf_test.cc",
     "manifest_handler_unittest.cc",
+    "manifest_handlers/chrome_url_overrides_unittest.cc",
     "manifest_handlers/content_capabilities_manifest_unittest.cc",
     "manifest_handlers/csp_info_unittest.cc",
     "manifest_handlers/default_locale_manifest_unittest.cc",
+    "manifest_handlers/devtools_page_unittest.cc",
     "manifest_handlers/extension_action_handler_unittest.cc",
     "manifest_handlers/extension_action_page_action_unittest.cc",
     "manifest_handlers/extension_manifests_icon_variants_unittest.cc",
@@ -658,6 +686,7 @@ source_set("unit_tests") {
     "manifest_handlers/manifest_v3_permissions_unittest.cc",
     "manifest_handlers/mime_types_handler_unittest.cc",
     "manifest_handlers/oauth2_manifest_unittest.cc",
+    "manifest_handlers/protocol_handler_manifest_unittest.cc",
     "manifest_handlers/replacement_apps_unittest.cc",
     "manifest_handlers/requirements_unittest.cc",
     "manifest_handlers/shared_module_manifest_unittest.cc",
@@ -665,8 +694,14 @@ source_set("unit_tests") {
     "manifest_handlers/update_url_unittest.cc",
     "manifest_unittest.cc",
     "message_bundle_unittest.cc",
+    "mojom/event_router_mojom_unittest.cc",
+    "mojom/extension_id_mojom_traits_unittest.cc",
+    "mojom/frame_mojom_unittest.cc",
     "mojom/message_port_mojom_traits_unittest.cc",
     "mojom/permission_set_mojom_traits_unittest.cc",
+    "mojom/renderer_host_mojom_unittest.cc",
+    "mojom/renderer_mojom_unittest.cc",
+    "mojom/service_worker_host_mojom_unittest.cc",
     "mojom/url_pattern_set_mojom_traits_unittest.cc",
     "permissions/api_permission_set_unittest.cc",
     "permissions/api_permission_unittest.cc",
@@ -690,7 +725,7 @@ source_set("unit_tests") {
     "//base/test:test_support",
     "//build:android_buildflags",
     "//components/crx_file",
-    "//components/version_info:version_info",
+    "//components/version_info",
     "//content/test:test_support",
     "//extensions:extensions_resources",
     "//extensions/common:mojom",
@@ -716,10 +751,6 @@ source_set("unit_tests") {
     sources += [ "manifest_handlers/file_handler_manifest_unittest.cc" ]
   }
 
-  if (is_chromeos_ash) {
-    sources += [ "manifest_handlers/action_handlers_handler_unittest.cc" ]
-  }
-
   data = [
     "//extensions/common/mojom/api_permission_id.mojom",
     "//tools/metrics/histograms/metadata/extensions/enums.xml",
@@ -742,6 +773,8 @@ if (enable_extensions) {
     deps = [
       ":common",
       "//base",
+      "//content/public/common",
+      "//content/test:test_support",
       "//extensions:test_support",
     ]
 

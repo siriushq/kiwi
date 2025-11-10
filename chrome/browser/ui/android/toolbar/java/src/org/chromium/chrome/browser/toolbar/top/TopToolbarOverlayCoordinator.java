@@ -9,7 +9,8 @@ import android.graphics.RectF;
 
 import org.chromium.base.Callback;
 import org.chromium.base.supplier.ObservableSupplier;
-import org.chromium.base.supplier.Supplier;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.layouts.CompositorModelChangeProcessor;
@@ -26,8 +27,10 @@ import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.resources.ResourceManager;
 
 import java.util.List;
+import java.util.function.Supplier;
 
 /** The public interface for the top toolbar texture component. */
+@NullMarked
 public class TopToolbarOverlayCoordinator implements SceneOverlay {
     /** The view state for this overlay. */
     private final PropertyModel mModel;
@@ -47,13 +50,15 @@ public class TopToolbarOverlayCoordinator implements SceneOverlay {
             Context context,
             LayoutManager layoutManager,
             Callback<ClipDrawableProgressBar.DrawingInfo> progressInfoCallback,
-            ObservableSupplier<Tab> tabSupplier,
+            ObservableSupplier<@Nullable Tab> tabSupplier,
             BrowserControlsStateProvider browserControlsStateProvider,
             Supplier<ResourceManager> resourceManagerSupplier,
             TopUiThemeColorProvider topUiThemeColorProvider,
-            Supplier<Integer> bottomToolbarControlsOffsetSupplier,
+            ObservableSupplier<Integer> bottomToolbarControlsOffsetSupplier,
+            ObservableSupplier<Boolean> suppressToolbarSceneLayerSupplier,
             int layoutsToShowOn,
-            boolean isVisibilityManuallyControlled) {
+            boolean isVisibilityManuallyControlled,
+            ObservableSupplier<Long> captureResourceIdSupplier) {
         // If BCIV is enabled, we always show the hairline on the composited
         // toolbar, and let renderer+viz control the visibility during scrolls.
         mContext = context;
@@ -86,8 +91,10 @@ public class TopToolbarOverlayCoordinator implements SceneOverlay {
                         browserControlsStateProvider,
                         topUiThemeColorProvider,
                         bottomToolbarControlsOffsetSupplier,
+                        suppressToolbarSceneLayerSupplier,
                         layoutsToShowOn,
-                        isVisibilityManuallyControlled);
+                        isVisibilityManuallyControlled,
+                        captureResourceIdSupplier);
     }
 
     /**
@@ -113,6 +120,14 @@ public class TopToolbarOverlayCoordinator implements SceneOverlay {
         mMediator.setAnonymize(anonymize);
     }
 
+    /**
+     * @param bookmarkBarHeightSupplier Supplier of the current Bookmark Bar height.
+     */
+    public void setBookmarkBarHeightSupplier(
+            @Nullable Supplier<Integer> bookmarkBarHeightSupplier) {
+        mMediator.setBookmarkBarHeightSupplier(bookmarkBarHeightSupplier);
+    }
+
     /** Clean up this component. */
     public void destroy() {
         mChangeProcessor.destroy();
@@ -127,12 +142,17 @@ public class TopToolbarOverlayCoordinator implements SceneOverlay {
     }
 
     @Override
+    public void removeFromParent() {
+        mSceneLayer.removeFromParent();
+    }
+
+    @Override
     public boolean isSceneOverlayTreeShowing() {
         return mMediator.shouldBeAttachedToTree();
     }
 
     @Override
-    public EventFilter getEventFilter() {
+    public @Nullable EventFilter getEventFilter() {
         return null;
     }
 

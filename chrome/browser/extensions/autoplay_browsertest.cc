@@ -5,10 +5,10 @@
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
+#include "chrome/browser/extensions/browsertest_util.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/extensions/extension_action_test_helper.h"
-#include "chrome/test/base/ui_test_utils.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_utils.h"
@@ -76,7 +76,8 @@ IN_PROC_BROWSER_TEST_F(AutoplayExtensionBrowserTest,
       LoadExtension(test_app_dir.UnpackedPath());
   ASSERT_TRUE(extension) << message_;
 
-  Browser* app_browser = LaunchAppBrowser(extension);
+  Browser* app_browser =
+      extensions::browsertest_util::LaunchAppBrowser(profile(), extension);
   content::WebContents* web_contents =
       app_browser->tab_strip_model()->GetActiveWebContents();
   EXPECT_TRUE(content::WaitForLoadStop(web_contents));

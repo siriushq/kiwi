@@ -28,6 +28,7 @@
 
 #include "third_party/blink/renderer/core/css/resolver/scoped_style_resolver.h"
 
+#include "base/types/zip.h"
 #include "third_party/blink/renderer/core/animation/document_timeline.h"
 #include "third_party/blink/renderer/core/css/cascade_layer_map.h"
 #include "third_party/blink/renderer/core/css/counter_style_map.h"
@@ -66,7 +67,7 @@ ScopedStyleResolver* ScopedStyleResolver::Parent() const {
 void ScopedStyleResolver::AddKeyframeRules(const RuleSet& rule_set) {
   const HeapVector<Member<StyleRuleKeyframes>> keyframes_rules =
       rule_set.KeyframesRules();
-  for (auto rule : keyframes_rules) {
+  for (const auto& rule : keyframes_rules) {
     AddKeyframeStyle(rule);
   }
 }
@@ -119,7 +120,7 @@ void ScopedStyleResolver::AppendActiveStyleSheets(
       continue;
     }
 
-    const RuleSet& rule_set = *active_sheet.second;
+    RuleSet& rule_set = *active_sheet.second;
     if (!active_style_sheets_.empty() &&
         active_style_sheets_.back().second == active_sheet.second) {
       // Some frameworks generate a ton of identical <style> tags;
@@ -132,12 +133,18 @@ void ScopedStyleResolver::AppendActiveStyleSheets(
       // however, we'd need to make sure this doesn't change @layer ordering.
     } else {
       active_style_sheets_.push_back(active_sheet);
+      rule_set.CompactRulesIfNeeded();
       AddKeyframeRules(rule_set);
       AddFontFaceRules(rule_set);
       AddCounterStyleRules(rule_set);
-      AddPositionTryRules(rule_set);
-      AddFunctionRules(rule_set);
+      AddNameDefiningRules<StyleRulePositionTry>(
+          rule_set.PositionTryRules(), cascade_layer_map_,
+          /*out=*/position_try_rule_map_);
+      AddNameDefiningRules<StyleRuleFunction>(rule_set.FunctionRules(),
+                                              cascade_layer_map_,
+                                              /*out=*/function_rule_map_);
       AddFontFeatureValuesRules(rule_set);
+      AddRuleSetToRuleSetGroupList(&rule_set, rule_set_groups_);
     }
     AddImplicitScopeTriggers(*sheet, rule_set);
   }
@@ -149,7 +156,7 @@ void ScopedStyleResolver::CollectFeaturesTo(
         visited_shared_style_sheet_contents) const {
   features.MutableMediaQueryResultFlags().Add(media_query_result_flags_);
 
-  for (auto [sheet, rule_set] : active_style_sheets_) {
+  for (const auto& [sheet, rule_set] : active_style_sheets_) {
     DCHECK(sheet->ownerNode() || sheet->IsConstructed());
     StyleSheetContents* contents = sheet->Contents();
     if (contents->HasOneClient() ||
@@ -162,6 +169,7 @@ void ScopedStyleResolver::CollectFeaturesTo(
 void ScopedStyleResolver::ResetStyle() {
   RemoveImplicitScopeTriggers();
   active_style_sheets_.clear();
+  rule_set_groups_.clear();
   media_query_result_flags_.Clear();
   keyframes_rule_map_.clear();
   position_try_rule_map_.clear();
@@ -260,76 +268,75 @@ void ScopedStyleResolver::KeyframesRulesAdded(const TreeScope& tree_scope) {
                                                                 reason);
 }
 
-namespace {
-
-bool CanRejectRuleSet(ElementRuleCollector& collector,
-                      const RuleSet& rule_set) {
-  const StyleScope* scope = rule_set.SingleScope();
-  return scope && collector.CanRejectScope(*scope);
-}
-
-}  // namespace
-
+// The `scope_root` represents the node that should match the `:scope`
+// selector. This is normally the same as the ScopedStyleResolver's
+// root node, except when resolving style for <use>-cloned
+// SVG elements.
 template <class Func>
 void ScopedStyleResolver::ForAllStylesheets(ElementRuleCollector& collector,
+                                            const ContainerNode& scope_root,
                                             const Func& func) {
-  if (active_style_sheets_.empty()) {
-    return;
+#if DCHECK_IS_ON()
+  // Verify that all the cached rule_set_groups_ have the right bits
+  // and RuleSets.
+  HeapVector<RuleSetGroup> ref_groups;
+  for (const auto& [sheet, rule_set] : active_style_sheets_) {
+    AddRuleSetToRuleSetGroupList(rule_set, ref_groups);
   }
+  DCHECK_EQ(ref_groups.size(), rule_set_groups_.size())
+      << "Differing number of requests for " << active_style_sheets_.size()
+      << " sheets";
+  for (const auto [ref, actual] : base::zip(ref_groups, rule_set_groups_)) {
+    actual.AssertEqualTo(ref);
+  }
+#endif
 
-  MatchRequest match_request{&scope_->RootNode()};
-  for (auto [sheet, rule_set] : active_style_sheets_) {
-    if (CanRejectRuleSet(collector, *rule_set)) {
-      continue;
-    }
-    match_request.AddRuleset(rule_set.Get());
-    if (match_request.IsFull()) {
-      func(match_request);
-      match_request.ClearAfterMatching();
-    }
-  }
-  if (!match_request.IsEmpty()) {
-    func(match_request);
+  for (RuleSetGroup& rule_set_group : rule_set_groups_) {
+    func(MatchRequest(rule_set_group, &scope_root, collector));
   }
 }
 
 void ScopedStyleResolver::CollectMatchingElementScopeRules(
+    const ContainerNode& scope_root,
     ElementRuleCollector& collector,
     PartNames* part_names) {
   ForAllStylesheets(
-      collector, [&collector, part_names](const MatchRequest& match_request) {
+      collector, scope_root,
+      [&collector, part_names](const MatchRequest& match_request) {
         collector.CollectMatchingRules(match_request, part_names);
       });
 }
 
 void ScopedStyleResolver::CollectMatchingShadowHostRules(
     ElementRuleCollector& collector) {
-  ForAllStylesheets(collector, [&collector](const MatchRequest& match_request) {
-    collector.CollectMatchingShadowHostRules(match_request);
-  });
+  ForAllStylesheets(collector, GetTreeScope().RootNode(),
+                    [&collector](const MatchRequest& match_request) {
+                      collector.CollectMatchingShadowHostRules(match_request);
+                    });
 }
 
 void ScopedStyleResolver::CollectMatchingSlottedRules(
     ElementRuleCollector& collector) {
-  ForAllStylesheets(collector, [&collector](const MatchRequest& match_request) {
-    collector.CollectMatchingSlottedRules(match_request);
-  });
+  ForAllStylesheets(collector, GetTreeScope().RootNode(),
+                    [&collector](const MatchRequest& match_request) {
+                      collector.CollectMatchingSlottedRules(match_request);
+                    });
 }
 
 void ScopedStyleResolver::CollectMatchingPartPseudoRules(
     ElementRuleCollector& collector,
-    PartNames* part_names,
-    bool for_shadow_pseudo) {
-  ForAllStylesheets(collector, [&](const MatchRequest& match_request) {
-    collector.CollectMatchingPartPseudoRules(match_request, part_names,
-                                             for_shadow_pseudo);
-  });
+    PartNames* part_names) {
+  ForAllStylesheets(collector, GetTreeScope().RootNode(),
+                    [&](const MatchRequest& match_request) {
+                      collector.CollectMatchingPartPseudoRules(match_request,
+                                                               part_names);
+                    });
 }
 
 void ScopedStyleResolver::MatchPageRules(PageRuleCollector& collector) {
   // Currently, only @page rules in the document scope apply.
   DCHECK(scope_->RootNode().IsDocumentNode());
-  for (auto [sheet, rule_set] : active_style_sheets_) {
+  for (const auto& [sheet, rule_set] : active_style_sheets_) {
     collector.MatchPageRules(rule_set.Get(), CascadeOrigin::kAuthor, scope_,
                              GetCascadeLayerMap());
   }
@@ -338,32 +345,6 @@ void ScopedStyleResolver::MatchPageRules(PageRuleCollector& collector) {
 void ScopedStyleResolver::RebuildCascadeLayerMap(
     const ActiveStyleSheetVector& sheets) {
   cascade_layer_map_ = MakeGarbageCollected<CascadeLayerMap>(sheets);
-}
-
-void ScopedStyleResolver::AddPositionTryRules(const RuleSet& rule_set) {
-  for (StyleRulePositionTry* rule : rule_set.PositionTryRules()) {
-    auto result = position_try_rule_map_.insert(rule->Name(), rule);
-    if (result.is_new_entry) {
-      continue;
-    }
-    Member<StyleRulePositionTry>& stored_rule = result.stored_value->value;
-    const bool should_override =
-        !cascade_layer_map_ ||
-        cascade_layer_map_->CompareLayerOrder(stored_rule->GetCascadeLayer(),
-                                              rule->GetCascadeLayer()) <= 0;
-    if (should_override) {
-      stored_rule = rule;
-    }
-  }
-}
-
-void ScopedStyleResolver::AddFunctionRules(const RuleSet& rule_set) {
-  const HeapVector<Member<StyleRuleFunction>> function_rules =
-      rule_set.FunctionRules();
-  for (StyleRuleFunction* rule : function_rules) {
-    // TODO(crbug.com/324780202): Handle @layer.
-    function_rule_map_.Set(rule->GetName(), rule);
-  }
 }
 
 void ScopedStyleResolver::AddFontFeatureValuesRules(const RuleSet& rule_set) {
@@ -406,7 +387,7 @@ StyleRulePositionTry* ScopedStyleResolver::PositionTryForName(
 }
 
 StyleRuleFunction* ScopedStyleResolver::FunctionForName(StringView name) {
-  auto iter = function_rule_map_.find(name.ToString());
+  auto iter = function_rule_map_.find(AtomicString(name));
   if (iter != function_rule_map_.end()) {
     return iter->value.Get();
   }
@@ -456,11 +437,17 @@ void ForEachImplicitScopeTrigger(TreeScope& scope,
   for (const RuleSet::Interval<StyleScope>& interval :
        rule_set.ScopeIntervals()) {
     const StyleScope* style_scope = interval.value.Get();
-    if (!style_scope || !style_scope->IsImplicit()) {
-      continue;
-    }
-    if (Element* scoping_root = ImplicitScopeTrigger(scope, sheet)) {
-      func(*scoping_root, *style_scope);
+    while (style_scope) {
+      if (style_scope->IsImplicit()) {
+        if (Element* scoping_root = ImplicitScopeTrigger(scope, sheet)) {
+          func(*scoping_root, *style_scope);
+        }
+      }
+      // Note that ScopeIntervals() only reaches the @scope rules that
+      // hold some style rule directly, but it's also possible to do e.g.
+      // @scope { @scope (.a) { div {} } }, where an implicit @scope exists
+      // as a parent-@scope only.
+      style_scope = style_scope->Parent();
     }
   }
 }
@@ -484,7 +471,7 @@ void ScopedStyleResolver::AddImplicitScopeTrigger(
 }
 
 void ScopedStyleResolver::RemoveImplicitScopeTriggers() {
-  for (auto [sheet, rule_set] : active_style_sheets_) {
+  for (const auto& [sheet, rule_set] : active_style_sheets_) {
     RemoveImplicitScopeTriggers(*sheet, *rule_set);
   }
 }
@@ -506,9 +493,30 @@ void ScopedStyleResolver::RemoveImplicitScopeTrigger(
   }
 }
 
+void ScopedStyleResolver::QuietlySwapActiveStyleSheets(
+    ActiveStyleSheetVector& other) {
+  // The new stylesheets may change which implicit @scope rules apply;
+  // various StyleScopeData objects (stored on ElementRareData) need
+  // to be updated.
+  RemoveImplicitScopeTriggers();
+
+  std::swap(active_style_sheets_, other);
+  rule_set_groups_.clear();
+  for (auto& [style_sheet, rule_set] : active_style_sheets_) {
+    AddRuleSetToRuleSetGroupList(rule_set, rule_set_groups_);
+    AddImplicitScopeTriggers(*style_sheet, *rule_set);
+  }
+  // Any @layer rules within the new list of active stylesheets
+  // must be collected in the cross-sheet layer map. Otherwise,
+  // CascadeLayerSeeker will not be able to figure out the layer
+  // order during rule collection.
+  RebuildCascadeLayerMap(active_style_sheets_);
+}
+
 void ScopedStyleResolver::Trace(Visitor* visitor) const {
   visitor->Trace(scope_);
   visitor->Trace(active_style_sheets_);
+  visitor->Trace(rule_set_groups_);
   visitor->Trace(keyframes_rule_map_);
   visitor->Trace(position_try_rule_map_);
   visitor->Trace(function_rule_map_);

@@ -10,22 +10,19 @@
 
 #include "base/functional/callback_forward.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/ui/extensions/mv2_disabled_dialog_controller.h"
-#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension_id.h"
 #include "ui/base/interaction/element_identifier.h"
 #include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/base/ui_base_types.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_ui_types.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
 #include "base/files/safe_base_name.h"
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
-static_assert(BUILDFLAG(ENABLE_EXTENSIONS));
-
 class Browser;
+class ControlledHomeDialogControllerInterface;
 class SettingsOverriddenDialogController;
 class Profile;
 
@@ -45,6 +42,14 @@ namespace extensions {
 
 class Extension;
 
+DECLARE_ELEMENT_IDENTIFIER_VALUE(kControlledHomeDialogCancelButtonElementId);
+DECLARE_ELEMENT_IDENTIFIER_VALUE(kExtensionInstallFrictionLearnMoreLink);
+DECLARE_ELEMENT_IDENTIFIER_VALUE(kMv2DisabledDialogManageButtonElementId);
+DECLARE_ELEMENT_IDENTIFIER_VALUE(kMv2DisabledDialogParagraphElementId);
+DECLARE_ELEMENT_IDENTIFIER_VALUE(kMv2DisabledDialogRemoveButtonElementId);
+DECLARE_ELEMENT_IDENTIFIER_VALUE(kMv2KeepDialogOkButtonElementId);
+DECLARE_ELEMENT_IDENTIFIER_VALUE(kParentBlockedDialogMessage);
+
 void ShowConstrainedDeviceChooserDialog(
     content::WebContents* web_contents,
     std::unique_ptr<permissions::ChooserController> controller);
@@ -59,6 +64,13 @@ void ShowExtensionInstallBlockedDialog(
     const gfx::ImageSkia& icon,
     content::WebContents* web_contents,
     base::OnceClosure done_callback);
+
+// Shows a dialog to notify the user when an extension has changed the home
+// page.
+void ShowControlledHomeDialog(
+    Profile* profile,
+    gfx::NativeWindow parent,
+    std::unique_ptr<ControlledHomeDialogControllerInterface> controller);
 
 // Shows a modal dialog to Enhanced Safe Browsing users before the extension
 // install dialog if the extension is not included in the Safe Browsing CRX
@@ -102,19 +114,11 @@ void ShowMv2DeprecationReEnableDialog(
     const std::string& extension_name,
     base::OnceCallback<void(bool)> done_callback);
 
-// Shows a dialog when extensions require a refresh for their action
-// to be run or blocked. When the dialog is accepted, `callback` is
-// invoked.
-void ShowReloadPageDialog(
-    Browser* browser,
-    const std::vector<extensions::ExtensionId>& extension_ids,
-    base::OnceClosure callback);
-
 // Shows a dialog with a warning to the user that their settings have been
 // overridden by an extension.
 void ShowSettingsOverriddenDialog(
     std::unique_ptr<SettingsOverriddenDialogController> controller,
-    Browser* browser);
+    gfx::NativeWindow parent);
 
 // The type of action that the ExtensionInstalledBlockedByParentDialog
 // is being shown in reaction to.
@@ -123,8 +127,6 @@ enum class ExtensionInstalledBlockedByParentDialogAction {
   kEnable,  // The user attempted to enable the extension.
 };
 
-DECLARE_ELEMENT_IDENTIFIER_VALUE(kParentBlockedDialogMessage);
-
 // Displays a dialog to notify the user that the extension installation is
 // blocked by a parent
 void ShowExtensionInstallBlockedByParentDialog(
@@ -132,6 +134,12 @@ void ShowExtensionInstallBlockedByParentDialog(
     const Extension* extension,
     content::WebContents* web_contents,
     base::OnceClosure done_callback);
+
+// Shows a dialog when the user tries to upload an extension to their account.
+void ShowUploadExtensionToAccountDialog(Browser* browser,
+                                        const Extension& extension,
+                                        base::OnceClosure accept_callback,
+                                        base::OnceClosure cancel_callback);
 
 #if BUILDFLAG(IS_CHROMEOS)
 
@@ -175,24 +183,6 @@ void ShowPrintJobConfirmationDialog(gfx::NativeWindow parent,
                                     const std::u16string& print_job_title,
                                     const std::u16string& printer_name,
                                     base::OnceCallback<void(bool)> callback);
-
-namespace file_handlers {
-
-#if BUILDFLAG(IS_CHROMEOS)
-// Show the pre-launch dialog for Web File Handlers. The choice to open or not
-// is presented if the extension doesn't already have permission (by default or
-// remembered). The dialog is not presented if "Don't open" was remembered.
-// `base_names` is the list of short file names to open, `file_types` are all of
-// the file extensions associated with the extension, and `callback` receives
-// bool for `should_remember` and `should_open`.
-void ShowWebFileHandlersFileLaunchDialog(
-    const std::vector<base::SafeBaseName>& base_names,
-    const std::vector<std::u16string>& file_types,
-    base::OnceCallback<void(/*should_open=*/bool, /*should_remember=*/bool)>
-        callback);
-#endif  // BUILDFLAG(IS_CHROMEOS)
-
-}  // namespace file_handlers
 
 #endif  // BUILDFLAG(IS_CHROMEOS)
 

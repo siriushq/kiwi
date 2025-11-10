@@ -592,7 +592,7 @@ bool HttpServerPropertiesManager::ParseAlternativeServiceInfoDictOfServer(
         advertised_versions.push_back(version);
       }
     }
-    alternative_service_info->set_advertised_versions(advertised_versions);
+    alternative_service_info->SetAdvertisedVersions(advertised_versions);
   }
 
   return true;
@@ -797,7 +797,7 @@ void HttpServerPropertiesManager::WriteToPrefs(
     servers_list.Append(std::move(server_dict));
   }
   // Reverse `servers_list`. The least recently used item will be in the front.
-  std::reverse(servers_list.begin(), servers_list.end());
+  std::ranges::reverse(servers_list);
 
   http_server_properties_dict.Set(kServersKey, std::move(servers_list));
 

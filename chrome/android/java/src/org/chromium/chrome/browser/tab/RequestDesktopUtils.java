@@ -9,22 +9,26 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.res.Resources;
 import android.os.Build;
+import android.text.TextUtils;
 import android.util.DisplayMetrics;
 import android.view.Display;
 
 import androidx.annotation.IntDef;
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
-import org.chromium.base.BuildInfo;
+import org.chromium.base.CommandLine;
 import org.chromium.base.ContextUtils;
+import org.chromium.base.DeviceInfo;
 import org.chromium.base.SysUtils;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.base.shared_preferences.SharedPreferencesManager;
-import org.chromium.build.BuildConfig;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
+import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.page_info.SiteSettingsHelper;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
 import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
@@ -33,8 +37,9 @@ import org.chromium.components.browser_ui.site_settings.SingleCategorySettingsCo
 import org.chromium.components.browser_ui.site_settings.SiteSettingsCategory;
 import org.chromium.components.browser_ui.site_settings.WebsitePreferenceBridge;
 import org.chromium.components.browser_ui.util.ConversionUtils;
-import org.chromium.components.content_settings.ContentSettingValues;
+import org.chromium.components.content_settings.ContentSetting;
 import org.chromium.components.content_settings.ContentSettingsType;
+import org.chromium.components.content_settings.PrefNames;
 import org.chromium.components.feature_engagement.EventConstants;
 import org.chromium.components.feature_engagement.FeatureConstants;
 import org.chromium.components.feature_engagement.Tracker;
@@ -47,6 +52,7 @@ import org.chromium.components.prefs.PrefService;
 import org.chromium.components.ukm.UkmRecorder;
 import org.chromium.components.user_prefs.UserPrefs;
 import org.chromium.ui.base.DeviceFormFactor;
+import org.chromium.ui.display.DisplayAndroid;
 import org.chromium.ui.display.DisplayAndroidManager;
 import org.chromium.ui.display.DisplayUtil;
 import org.chromium.ui.modelutil.PropertyModel;
@@ -54,13 +60,18 @@ import org.chromium.url.GURL;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.Locale;
+import java.util.Set;
 
 /** Utilities for requesting desktop sites support. */
+@NullMarked
 public class RequestDesktopUtils {
     private static final String SITE_WILDCARD = "*";
     // Global defaults experiment constants.
-    private static DisplayMetrics sDisplayMetrics;
+    private static @Nullable DisplayMetrics sDisplayMetrics;
+    @VisibleForTesting static @Nullable Boolean sDesktopUAAllowedOnExternalDisplayForOem;
 
     static final double DEFAULT_GLOBAL_SETTING_DEFAULT_ON_DISPLAY_SIZE_THRESHOLD_INCHES = 10.0;
     static final int DEFAULT_GLOBAL_SETTING_DEFAULT_ON_SMALLEST_SCREEN_WIDTH_THRESHOLD_DP = 600;
@@ -140,18 +151,16 @@ public class RequestDesktopUtils {
                 ContentSettingsType.REQUEST_DESKTOP_SITE,
                 url.getHost(),
                 /* secondaryPattern= */ SITE_WILDCARD,
-                ContentSettingValues.DEFAULT);
+                ContentSetting.DEFAULT);
 
-        @ContentSettingValues
+        @ContentSetting
         int defaultValue =
                 WebsitePreferenceBridge.getDefaultContentSetting(
                         profile, ContentSettingsType.REQUEST_DESKTOP_SITE);
-        assert defaultValue == ContentSettingValues.ALLOW
-                || defaultValue == ContentSettingValues.BLOCK;
-        boolean rdsGlobalSetting = defaultValue == ContentSettingValues.ALLOW;
-        @ContentSettingValues
-        int contentSettingValue =
-                useDesktopUserAgent ? ContentSettingValues.ALLOW : ContentSettingValues.BLOCK;
+        assert defaultValue == ContentSetting.ALLOW || defaultValue == ContentSetting.BLOCK;
+        boolean rdsGlobalSetting = defaultValue == ContentSetting.ALLOW;
+        @ContentSetting
+        int contentSettingValue = useDesktopUserAgent ? ContentSetting.ALLOW : ContentSetting.BLOCK;
         // For normal profile, remove domain level setting if it matches the global setting.
         // For incognito profile, keep the domain level setting to override the settings from normal
         // profile.
@@ -159,7 +168,7 @@ public class RequestDesktopUtils {
             // Keep the domain settings when the window setting preference is ON.
             PrefService prefService = UserPrefs.get(profile);
             if (!prefService.getBoolean(DESKTOP_SITE_WINDOW_SETTING_ENABLED)) {
-                contentSettingValue = ContentSettingValues.DEFAULT;
+                contentSettingValue = ContentSetting.DEFAULT;
             }
         }
 
@@ -173,33 +182,6 @@ public class RequestDesktopUtils {
     }
 
     /**
-     * Upgrade a non-default tab level RDS setting to a domain level setting when RDS exceptions is
-     * supported. This method is expected to be invoked only once after support is added for domain
-     * level exceptions.
-     * @param tab The {@link Tab} for which the RDS setting will be upgraded.
-     * @param profile The {@link Profile} used to upgrade the RDS setting.
-     * @param tabUserAgent The current {@link TabUserAgent} set for the tab.
-     * @param url The {@link GURL} for which a domain level exception will be added.
-     */
-    public static void maybeUpgradeTabLevelDesktopSiteSetting(
-            Tab tab, Profile profile, @TabUserAgent int tabUserAgent, @Nullable GURL url) {
-        if (url == null) {
-            return;
-        }
-
-        // If the tab UA is UNSET, it represents a state before tab level settings were applied for
-        // the tab, so the domain level setting cannot be upgraded to at this time.
-        if (tabUserAgent == TabUserAgent.UNSET) {
-            return;
-        }
-
-        RequestDesktopUtils.setRequestDesktopSiteContentSettingsForUrl(
-                profile, url, tabUserAgent == TabUserAgent.DESKTOP);
-        // Reset the tab level setting after upgrade.
-        tab.setUserAgent(TabUserAgent.DEFAULT);
-    }
-
-    /**
      * Determines whether the desktop site global setting should be enabled by default.
      *
      * @param displaySizeInInches The device primary display size, in inches.
@@ -208,7 +190,7 @@ public class RequestDesktopUtils {
      */
     static boolean shouldDefaultEnableGlobalSetting(double displaySizeInInches, Context context) {
         // Desktop Android always requests desktop sites.
-        if (BuildConfig.IS_DESKTOP_ANDROID) {
+        if (DeviceInfo.isDesktop()) {
             return true;
         }
 
@@ -287,12 +269,12 @@ public class RequestDesktopUtils {
         boolean isOnExternalDisplay = isOnExternalDisplay(activity);
         if (isOnExternalDisplay
                 || smallestScreenWidthDp < DeviceFormFactor.MINIMUM_TABLET_WIDTH_DP
-                || BuildConfig.IS_DESKTOP_ANDROID) {
+                || DeviceInfo.isDesktop()) {
             return;
         }
         PrefService prefService = UserPrefs.get(profile);
         if (prefService.isDefaultValuePreference(DESKTOP_SITE_WINDOW_SETTING_ENABLED)) {
-            prefService.setBoolean(DESKTOP_SITE_WINDOW_SETTING_ENABLED, /* newValue= */ true);
+            prefService.setBoolean(DESKTOP_SITE_WINDOW_SETTING_ENABLED, /* value= */ true);
         }
     }
 
@@ -310,7 +292,7 @@ public class RequestDesktopUtils {
 
         // Desktop devices always request desktop sites so there's no need to show a message to
         // the user.
-        if (BuildConfig.IS_DESKTOP_ANDROID) {
+        if (DeviceInfo.isDesktop()) {
             return false;
         }
 
@@ -383,12 +365,54 @@ public class RequestDesktopUtils {
     }
 
     /**
+     * Determines whether the desktop site should be overridden for the current URL.
+     *
+     * @param profile The current {@link Profile}.
+     * @param url The current URL.
+     * @param context The current context.
+     * @return Whether the desktop site should be overridden for the current URL.
+     */
+    public static boolean shouldOverrideDesktopSite(
+            Profile profile, @Nullable GURL url, Context context) {
+        // For --request-desktop-sites, always override the user agent.
+        if (CommandLine.getInstance().hasSwitch(ChromeSwitches.REQUEST_DESKTOP_SITES)) {
+            return true;
+        }
+
+        // If domain/global setting is enabled and window setting should not
+        // apply, override the user agent.
+        if (TabUtils.readRequestDesktopSiteContentSettings(profile, url)
+                && !RequestDesktopUtils.shouldApplyWindowSetting(profile, url, context)) {
+            return true;
+        }
+
+        // Enable on large connected displays only when user has not explicitly set preference.
+        if (ChromeFeatureList.sDesktopUAOnConnectedDisplay.isEnabled()
+                && isOnEligibleExternalDisplayForDesktopUA(context)
+                && !hasUserUpdatedContentSettings(url, profile)) {
+            return true;
+        }
+        return false;
+    }
+
+    private static boolean hasUserUpdatedContentSettings(@Nullable GURL url, Profile profile) {
+        // Global setting would not apply when user overrides via domain settings.
+        if (!TabUtils.isRequestDesktopSiteContentSettingsGlobal(profile, url)) return true;
+
+        // Using global settings.
+        // Check if user has updated global setting preference.
+        SharedPreferencesManager sharedPreferencesManager = ChromeSharedPreferences.getInstance();
+        return sharedPreferencesManager.contains(
+                PrefNames.REQUEST_DESKTOP_SITE_GLOBAL_SETTING_USER_ENABLED);
+    }
+
+    /**
      * Determine whether RDS window setting should be applied. When returning 'true' the mobile user
      * agent should be used for the current window size.
      */
-    static boolean shouldApplyWindowSetting(Profile profile, GURL url, Context context) {
+    static boolean shouldApplyWindowSetting(Profile profile, @Nullable GURL url, Context context) {
         // Skip window setting on Automotive and revisit if / when they add split screen.
-        if (BuildInfo.getInstance().isAutomotive) {
+        if (DeviceInfo.isAutomotive()) {
             return false;
         }
         PrefService prefService = UserPrefs.get(profile);
@@ -443,8 +467,42 @@ public class RequestDesktopUtils {
         return abiStrings[0].toLowerCase(Locale.ROOT).contains("arm");
     }
 
-    private static boolean isOnExternalDisplay(Context context) {
+    static boolean isOnExternalDisplay(Context context) {
         Display display = DisplayAndroidManager.getDefaultDisplayForContext(context);
         return display.getDisplayId() != Display.DEFAULT_DISPLAY;
+    }
+
+    private static boolean isOnEligibleExternalDisplayForDesktopUA(Context context) {
+        // Do not enable on default display.
+        if (!isOnExternalDisplay(context)) {
+            return false;
+        }
+
+        // Do not enable on displays smaller than threshold.
+        DisplayAndroid currentDisplay = DisplayAndroid.getNonMultiDisplay(context);
+        double displaySizeInInches = DisplayUtil.getDisplaySizeInInches(currentDisplay);
+        if (displaySizeInInches < DEFAULT_GLOBAL_SETTING_DEFAULT_ON_DISPLAY_SIZE_THRESHOLD_INCHES) {
+            return false;
+        }
+
+        // Do not enable on OEMs not allowlisted.
+        if (sDesktopUAAllowedOnExternalDisplayForOem == null) {
+            Set<String> allowlist = new HashSet<>();
+            String allowlistStr =
+                    ChromeFeatureList.getFieldTrialParamByFeature(
+                            ChromeFeatureList.DESKTOP_UA_ON_CONNECTED_DISPLAY,
+                            "ext_display_desktop_ua_oem_allowlist");
+            if (!TextUtils.isEmpty(allowlistStr)) {
+                Collections.addAll(allowlist, allowlistStr.split(","));
+            }
+            sDesktopUAAllowedOnExternalDisplayForOem =
+                    !allowlist.isEmpty()
+                            && allowlist.contains(Build.MANUFACTURER.toLowerCase(Locale.US));
+        }
+        if (!sDesktopUAAllowedOnExternalDisplayForOem) {
+            return false;
+        }
+
+        return true;
     }
 }

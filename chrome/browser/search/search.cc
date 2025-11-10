@@ -29,6 +29,7 @@
 #include "components/supervised_user/core/browser/supervised_user_url_filter.h"  // nogncheck
 #include "components/supervised_user/core/browser/supervised_user_utils.h"
 #include "components/supervised_user/core/common/buildflags.h"
+#include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
@@ -150,8 +151,7 @@ bool IsURLAllowedForSupervisedUser(const GURL& url, Profile& profile) {
       SupervisedUserServiceFactory::GetForProfile(&profile);
   supervised_user::SupervisedUserURLFilter* url_filter =
       supervised_user_service->GetURLFilter();
-  if (url_filter->GetFilteringBehaviorForURL(url) ==
-      supervised_user::FilteringBehavior::kBlock) {
+  if (url_filter->GetFilteringBehavior(url).IsBlocked()) {
     return false;
   }
   return true;
@@ -229,7 +229,7 @@ bool IsRenderedInInstantProcess(content::WebContents* contents,
     return false;
   }
 
-  return instant_service->IsInstantProcess(process_host->GetID());
+  return instant_service->IsInstantProcess(process_host->GetDeprecatedID());
 #endif
 }
 
@@ -305,6 +305,10 @@ bool IsInstantNTPURL(const GURL& url, Profile* profile) {
   return new_tab_url.is_valid() && MatchesOriginAndPath(url, new_tab_url);
 }
 
+bool IsSplitViewNewTabPage(const GURL& url) {
+  return url.spec() == chrome::kChromeUISplitViewNewTabPageURL;
+}
+
 GURL GetNewTabPageURL(Profile* profile) {
   return NewTabURLDetails::ForProfile(profile).url;
 }
@@ -327,12 +331,13 @@ bool ShouldUseProcessPerSiteForInstantSiteURL(const GURL& site_url,
          site_url.host_piece() == chrome::kChromeSearchRemoteNtpHost;
 }
 
-GURL GetEffectiveURLForInstant(const GURL& url, Profile* profile) {
+std::optional<GURL> GetEffectiveURLForInstant(const GURL& url,
+                                              Profile* profile) {
   CHECK(ShouldAssignURLToInstantRenderer(url, profile))
       << "Error granting Instant access.";
 
   if (url.SchemeIs(chrome::kChromeSearchScheme)) {
-    return url;
+    return std::nullopt;
   }
 
   // Replace the scheme with "chrome-search:", and clear the port, since
